@@ -20,6 +20,7 @@ DKForce_AddonCompartmentLeave
 EllesmereUI
 Enum
 EssentialCooldownViewer
+FindSpellOverrideByID
 GameTooltip
 GameTooltip_Hide
 GetActionInfo

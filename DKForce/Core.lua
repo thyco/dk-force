@@ -48,6 +48,16 @@ addon.SPELLS = {
         name = "Soul Reaper",
         key  = nil,
     },
+    -- Only the base id is listed.  Clawing Shadows and San'layn's Vampiric
+    -- Strike are talent OVERRIDES of Scourge Strike, so ButtonScanner resolves
+    -- whichever is live and matches it back to this entry.  That is the
+    -- opposite of the Festering Strike / Festering Scythe pair above, which
+    -- needs both ids because a proc replacement is not an override.
+    SCOURGE_STRIKE = {
+        id   = 55090,
+        name = "Scourge Strike",
+        key  = "scourgeStrike",
+    },
     BLIGHTFALL = {
         id   = 1271967,
         name = "Blightfall",
@@ -81,8 +91,12 @@ local DEFAULT_GLOW_SETTINGS = {
     -- player after this optional grace period.
     combatGlow  = true,
     combatGrace = 0,
-    -- Independent reminder while Lesser Ghoul is absent in combat.
+    -- Independent reminders while Lesser Ghoul is absent in combat.  Both hang
+    -- off the same detection and are separately switchable, so either, both or
+    -- neither can be on.  Festering-only keys, kept here because glowTiming,
+    -- combatGrace and lesserGhoulGlow already are.
     lesserGhoulGlow = false,
+    lesserGhoulDim  = false,
 }
 
 addon.DEFAULT_DB = {
@@ -164,6 +178,7 @@ function addon:StopAll()
     addon:StopFesteringGlow()
     addon:StopSuddenDoomGlows()
     addon:StopDnDMissingGlow()
+    addon:StopScourgeDim()
 end
 
 local castFrame = CreateFrame("Frame")
@@ -178,6 +193,13 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         -- TRAIT_CONFIG_UPDATED already covers the live path; this keeps the
         -- two talent events symmetrical.
         addon:RefreshBlightfallTracker()
+        -- A talent swap within one spec fires this and NOT
+        -- PLAYER_SPECIALIZATION_CHANGED, so this is the only place that catches
+        -- Clawing Shadows becoming Vampiric Strike.  Both the id the override
+        -- resolves to and the icon art it carries change with it, so drop the
+        -- lookups and re-cache.  Out of combat only: the rescan touches frames,
+        -- and the desaturation caches icon textures that are secret in combat.
+        if not InCombatLockdown() then addon:RequestRescan() end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if unit ~= "player" then return end
         if spellID == addon.SPELLS.FESTERING_STRIKE.id then

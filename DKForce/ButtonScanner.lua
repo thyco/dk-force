@@ -34,6 +34,7 @@ do
 end
 
 local spellTextureLookup = nil
+local overrideLookup = nil
 
 local function GetSpellTextureLookup()
     if spellTextureLookup then return spellTextureLookup end
@@ -45,6 +46,52 @@ local function GetSpellTextureLookup()
         end
     end
     return spellTextureLookup
+end
+
+-- Talents can replace a tracked spell outright: Scourge Strike becomes Clawing
+-- Shadows or Vampiric Strike.  An action slot holding the base spell still
+-- reports the base id, but one filled from the spellbook after the override is
+-- live reports the override, so both have to resolve to the same tracked entry.
+-- The API was renamed; try the current name and fall back to the old one.
+local function ResolveOverride(spellID)
+    if C_Spell and C_Spell.GetOverrideSpell then
+        local ok, id = pcall(C_Spell.GetOverrideSpell, spellID)
+        if ok and id then return id end
+    end
+    if FindSpellOverrideByID then
+        local ok, id = pcall(FindSpellOverrideByID, spellID)
+        if ok and id then return id end
+    end
+    return nil
+end
+
+-- Built once and reused, rather than an API call per button per scan.
+local function GetOverrideLookup()
+    if overrideLookup then return overrideLookup end
+    overrideLookup = {}
+    for _, spell in pairs(addon.SPELLS or {}) do
+        if spell.key then
+            local override = ResolveOverride(spell.id)
+            if override and override ~= spell.id then
+                overrideLookup[override] = spell.id
+            end
+        end
+    end
+    return overrideLookup
+end
+
+-- Maps a live spell id back to the tracked base it stands in for, or returns it
+-- unchanged.  Also used by CDMHook, whose items report the overridden spell.
+function addon:ResolveBaseSpellID(spellID)
+    if not spellID then return nil end
+    return GetOverrideLookup()[spellID] or spellID
+end
+
+-- Both caches go stale on a talent or spec change: overrides come and go, and
+-- an override brings its own icon art with it.
+function addon:ResetSpellLookups()
+    spellTextureLookup = nil
+    overrideLookup = nil
 end
 
 local function GetButtonSpellID(button)
@@ -114,8 +161,9 @@ local function ScanActionBars()
             if width and height and width > 1 and height > 1 then
                 local spellID = GetButtonSpellID(button)
                 if spellID then
+                    local baseID = addon:ResolveBaseSpellID(spellID)
                     for _, spell in pairs(addon.SPELLS or {}) do
-                        if spell.key and spellID == spell.id then
+                        if spell.key and (spellID == spell.id or baseID == spell.id) then
                             results[spell.key] = results[spell.key] or {}
                             local found = false
                             for _, existing in ipairs(results[spell.key]) do
@@ -153,8 +201,25 @@ function addon:ScanAllButtons()
     if addon.CreateFesteringOverlays then addon:CreateFesteringOverlays() end
     if addon.CreateSuddenDoomOverlays then addon:CreateSuddenDoomOverlays() end
     if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
+    if addon.CreateScourgeOverlays then addon:CreateScourgeOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
+end
+
+-- A talent change fires PLAYER_TALENT_UPDATE several times, and one scan walks
+-- well over a thousand button names.  Coalesce them into a single pass, and do
+-- the lookup reset inside it so the rebuild always sees post-change talents.
+local rescanPending = false
+
+function addon:RequestRescan()
+    if rescanPending then return end
+    rescanPending = true
+    C_Timer.After(0.5, function()
+        rescanPending = false
+        addon:ResetSpellLookups()
+        addon:ScanAllButtons()
+        if addon.RefreshScourgeDim then addon:RefreshScourgeDim() end
+    end)
 end
 
 -- =========================
@@ -252,8 +317,11 @@ scanFrame:SetScript("OnEvent", function(_, event)
         end
 
     elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
-        -- CDM frames may be rebuilt on talent/spec change
-        -- Full rescan after a delay to let CDM rebuild
+        -- CDM frames may be rebuilt on talent/spec change.  A spec change can
+        -- also add or remove an override, changing both which ids map to a
+        -- tracked spell and what art they carry, so the buttons get the same
+        -- coalesced rescan a talent swap does.
+        addon:RequestRescan()
         C_Timer.After(2, function()
             addon:CreateCDMOverlays()
         end)

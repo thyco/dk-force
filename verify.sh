@@ -58,27 +58,32 @@ stalecmd=$(grep -rn "/dka\b\|/dkassist\b" "$ADDON" --include='*.lua' 2>/dev/null
 if [ -n "$stalecmd" ]; then say "stale slash command" "FAIL"; echo "$stalecmd"; FAIL=1
 else say "stale slash command" "OK"; fi
 
-# 7. The Stand In Death and Decay reminder must still BEHAVE correctly.
-#    This is the feature the whole project exists to preserve.  It used to be an
-#    md5 over the subsystem, which only proved the bytes had not changed: every
-#    intentional edit failed it and was resolved by re-blessing the hash, so it
-#    was a speed bump rather than a defence, and it could not survive the code
-#    moving to another file.  The spec below slices the real subsystem out and
-#    runs it under desktop Lua with the WoW API stubbed, asserting the glow
-#    decisions themselves -- the grace period that filters the Cleaving Strikes
-#    blink, the combat gate, the spec and enabled gates.  Each of those
-#    assertions was proven to fail against a deliberately broken copy before
-#    this check was trusted.
+# 7. Behavioural specs.  Each one slices a real subsystem out of the shipped
+#    source and runs it under desktop Lua with the WoW API stubbed, so it
+#    exercises the code that ships rather than a retyped copy.  This started as
+#    an md5 over the Stand In Death and Decay subsystem, which only proved the
+#    bytes had not changed: every intentional edit failed it and was resolved by
+#    re-blessing the hash, so it was a speed bump rather than a defence, and it
+#    could not survive the code moving to another file.
+#
+#    Every tests/*_spec.lua runs, so adding a spec needs no edit here.  The D&D
+#    one is named explicitly because it is the feature this project exists to
+#    preserve: its absence is a failure, not an empty glob.  Each assertion in
+#    both specs was proven to fail against a deliberately broken copy before the
+#    spec was trusted.
 if [ ! -f tests/dnd_missing_spec.lua ]; then
   say "DnD behaviour spec" "MISSING"; FAIL=1
 elif ! command -v lua >/dev/null 2>&1; then
-  say "DnD behaviour spec" "SKIP (no lua)"
+  say "behaviour specs" "SKIP (no lua)"
 else
-  if out=$(lua tests/dnd_missing_spec.lua 2>&1); then
-    say "Stand In Death and Decay behaviour" "OK"
-  else
-    say "Stand In Death and Decay behaviour" "FAIL"; echo "$out"; FAIL=1
-  fi
+  for spec in tests/*_spec.lua; do
+    if out=$(lua "$spec" 2>&1); then
+      # The spec prints its own pass line, including its assertion count.
+      printf '%s\n' "$out"
+    else
+      say "spec  $(basename "$spec")" "FAIL"; echo "$out"; FAIL=1
+    fi
+  done
 fi
 
 # 8. No leaked globals.  A local that was deleted but still referenced compiles

@@ -223,6 +223,27 @@ function addon:RegisterCDMLesserGhoulFrame(frame)
     lesserGhoulFrame = frame
 end
 
+-- Lesser Ghoul reminder gating
+--
+-- Two independent reminders hang off one piece of state: the Festering Scythe
+-- glow and the Scourge Strike desaturation in ScourgeDim.lua.  The absence test
+-- is therefore computed on its own and handed to both.  It used to fold the
+-- glow's own toggle into the absence test, which is correct with one consumer
+-- and wrong with two -- with only the desaturation ticked, a glow-gated absence
+-- never becomes true and that reminder could never fire.
+--
+-- A method rather than a file-local so tests/ghoul_dim_spec.lua can slice and
+-- call it.  `frameShown` is nil when no Lesser Ghoul icon has been registered,
+-- which is not the same as a registered icon that is hidden: the first means
+-- nothing is known, the second means the buff is gone.
+function addon:EvaluateGhoulState(settings, frameShown, inCombat)
+    if not (settings and settings.enabled and inCombat) then return false, false end
+    if frameShown == nil then return false, false end
+    local missing = not frameShown
+    return (settings.lesserGhoulGlow and missing) or false,
+           (settings.lesserGhoulDim and missing) or false
+end
+
 local ghoulWatcher = CreateFrame("Frame")
 local ghoulElapsed = 0
 ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
@@ -231,15 +252,11 @@ ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
     ghoulElapsed = 0
 
     local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
-    local glowEnabled = settings and settings.enabled and settings.lesserGhoulGlow
-    if not settings or not glowEnabled
-        or not lesserGhoulFrame or not InCombatLockdown() then
-        SetFesteringReason("ghoul", false)
-        return
-    end
-
-    local missing = not lesserGhoulFrame:IsShown()
-    SetFesteringReason("ghoul", glowEnabled and missing)
+    -- nil when no icon is registered, false when one is registered and hidden.
+    local frameShown = lesserGhoulFrame and lesserGhoulFrame:IsShown()
+    local glow, dim = addon:EvaluateGhoulState(settings, frameShown, InCombatLockdown())
+    SetFesteringReason("ghoul", glow)
+    addon:SetScourgeDimmed(dim)
 end)
 
 function addon:RefreshFesteringGlows()

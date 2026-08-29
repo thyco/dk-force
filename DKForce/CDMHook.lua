@@ -7,6 +7,9 @@ local SUDDEN_DOOM_BUFF_ID = 81340
 -- while the live proc aura uses 81340.
 local SUDDEN_DOOM_CDM_ID = 49530
 local LESSER_GHOUL_SPELL_ID = 1254252
+-- Base id only; addon:ResolveBaseSpellID maps a live Clawing Shadows or
+-- Vampiric Strike back to it.
+local SCOURGE_STRIKE_SPELL_ID = 55090
 local DEATH_AND_DECAY_SPELL_ID = 43265
 local DEATH_AND_DECAY_BUFF_ID = 188290
 local hooked = false
@@ -28,9 +31,18 @@ local function GetCDMItemSpellID(item)
     return item:GetSpellID()
 end
 
+-- The Lesser Ghoul icon is the detection source for BOTH ghoul reminders, so it
+-- has to be registered when either is on.  Gating it on the glow alone would
+-- leave the desaturation with nothing to watch.
 local function LesserGhoulEnabled()
     local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
-    return (settings and settings.enabled and settings.lesserGhoulGlow) or false
+    if not (settings and settings.enabled) then return false end
+    return (settings.lesserGhoulGlow or settings.lesserGhoulDim) and true or false
+end
+
+local function IsScourgeItem(spellID)
+    return addon:IsScourgeDimEnabled()
+        and addon:ResolveBaseSpellID(spellID) == SCOURGE_STRIKE_SPELL_ID
 end
 
 -- Death and Decay appears twice in the CDM: the ability icon is a glow target,
@@ -55,7 +67,8 @@ end
 
 local function RegisterItem(item)
     if not DKForceDB or (not DKForceDB.trackCDMFestering
-        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not addon:IsDnDMissingEnabled()) then return end
+        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled()
+        and not addon:IsDnDMissingEnabled() and not addon:IsScourgeDimEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
@@ -67,6 +80,8 @@ local function RegisterItem(item)
             return "deathCoil"
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
+        elseif IsScourgeItem(spellID) then
+            return "scourge"
         elseif addon:IsDnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
                 or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
@@ -84,6 +99,8 @@ local function RegisterItem(item)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
+    elseif kind == "scourge" then
+        addon:RegisterCDMScourgeFrame(item)
     elseif kind == "bloodDndAbility" then
         addon:RegisterCDMDnDMissingFrame(item)
     elseif kind == "bloodDndBuff" then
@@ -111,6 +128,8 @@ local function RegisterEllesmereItem(item, euiCDM)
             return "deathCoil"
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
+        elseif IsScourgeItem(spellID) then
+            return "scourge"
         elseif addon:IsDnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
             -- A reported aura ID settles it outright; otherwise fall back to
@@ -126,6 +145,8 @@ local function RegisterEllesmereItem(item, euiCDM)
         addon:RegisterCDMSuddenDoomFrame(item, kind)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
+    elseif kind == "scourge" then
+        addon:RegisterCDMScourgeFrame(item)
     elseif kind == "bloodDndAbility" then
         addon:RegisterCDMDnDMissingFrame(item)
     elseif kind == "bloodDndBuff" then

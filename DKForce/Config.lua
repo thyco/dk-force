@@ -559,16 +559,30 @@ function addon:CreateConfigPanel(standalone)
                     settings().lesserGhoulGlow = value
                     if value and addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
                 end)
+            -- Independent of the glow above: both read the same detection, so
+            -- either can run alone.  Turning it off must clear any live
+            -- desaturation, or the icon stays grey until the next combat drop.
+            page.ghoulDim = CreateCheck(page.ghoulCard, "Desaturate Scourge Strike when no Lesser Ghoul stacks", 14, -46,
+                function() return settings().lesserGhoulDim end,
+                function(value)
+                    settings().lesserGhoulDim = value
+                    if value then
+                        if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+                        if addon.ScanAllButtons then addon:ScanAllButtons() end
+                    elseif addon.StopScourgeDim then
+                        addon:StopScourgeDim()
+                    end
+                end)
             page.ghoulHint = CreateText(page.ghoulCard,
                 "Requires Lesser Ghoul in the Cooldown Manager, under either Tracked Buffs or Tracked Bars.",
-                18, -49, "GameFontHighlightSmall", 310, { 0.64, 0.64, 0.64 })
+                18, -75, "GameFontHighlightSmall", 310, { 0.64, 0.64, 0.64 })
         end
 
         page.refresh = function()
             page.selector.refresh()
             if key ~= "deathcoil" and key ~= "epidemic" then page.enable.refresh() end
             page.refreshColor()
-            if page.timing then page.timing.refresh(); page.combat.refresh(); page.grace.refresh(); page.ghoul.refresh() end
+            if page.timing then page.timing.refresh(); page.combat.refresh(); page.grace.refresh(); page.ghoul.refresh(); page.ghoulDim.refresh() end
             if page.threshold then page.threshold.refresh() end
             RefreshPreview(page)
         end
@@ -689,7 +703,10 @@ function addon:CreateConfigPanel(standalone)
                 page.settingsCard:SetSize(leftWidth, topHeight)
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
                 page.previewCard:SetSize(rightWidth, topHeight)
-                local warningHeight = math.max(174, math.floor(lowerHeight * 0.62))
+                -- The ghoul card below now carries two checks plus its hint, so the
+                -- warning card above it is held to its own minimum rather than
+                -- taking a share of the space that grows with the panel.
+                local warningHeight = math.max(174, math.floor(lowerHeight * 0.55))
                 page.warningCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
                 page.warningCard:SetSize(leftWidth, warningHeight)
                 page.ghoulCard:SetPoint("TOPLEFT", page.warningCard, "BOTTOMLEFT", 0, -gap)
@@ -910,7 +927,7 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetScript("OnClick", function()
         testActive = not testActive
         if testActive then
-            if selectedKey == "festering" then addon:TestFesteringGlow()
+            if selectedKey == "festering" then addon:TestFesteringGlow(); addon:TestScourgeDim()
             elseif selectedKey == "deathcoil" then addon:TestSuddenDoomGlow("deathCoil")
             elseif selectedKey == "epidemic" then addon:TestSuddenDoomGlow("epidemic")
             elseif selectedKey == "suddendoom" then
