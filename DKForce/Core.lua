@@ -187,8 +187,6 @@ addon.DEFAULT_DB = {
     -- so `enabled` is the single switch for the whole feature.
     blightfallChain = {
         enabled         = false,
-        soundEnabled    = true,
-        soundVolume     = 100,
         soulReaperDelay = 6.0,
         blightfallDelay = 7.5,
         iconSize        = 64,
@@ -973,45 +971,14 @@ end)
 -- Unholy chain prompt: Soul Reaper -> Blightfall
 -- -------------------------------------------------------
 -- Icon prompt only.  Upstream also drew a scrolling timeline lane; DK Force
--- keeps just the single movable icon with its countdown and "NOW" glow.
+-- keeps just the single movable icon with its countdown and ready glow.
 local BLIGHTFALL_GRACE = 5
 local blightIconFrame
 local blightState
 local blightTest = false
-local blightLastCue
-local blightVoiceID
 
 local function BlightfallSettings()
     return DKForceDB and DKForceDB.blightfallChain
-end
-
-local function BlightfallFallbackSound(now)
-    if now then
-        PlaySound(SOUNDKIT.READY_CHECK, "Master")
-    else
-        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "Master")
-    end
-end
-
-local function BlightfallSpeak(text, now)
-    local s = BlightfallSettings()
-    if not s or not s.soundEnabled then return end
-    if C_VoiceChat and C_VoiceChat.GetTtsVoices and C_VoiceChat.SpeakText then
-        if not blightVoiceID then
-            local voices = C_VoiceChat.GetTtsVoices()
-            blightVoiceID = voices and voices[1] and voices[1].voiceID
-        end
-        if blightVoiceID then
-            if C_VoiceChat.StopSpeakingText then pcall(C_VoiceChat.StopSpeakingText) end
-            C_Timer.After(0, function()
-                local volume = math.max(0, math.min(100, s.soundVolume or 100))
-                local ok = pcall(C_VoiceChat.SpeakText, blightVoiceID, text, 0, volume, true)
-                if not ok then BlightfallFallbackSound(now) end
-            end)
-            return
-        end
-    end
-    BlightfallFallbackSound(now)
 end
 
 local function BlightfallStepInfo(step)
@@ -1046,7 +1013,6 @@ local function UpdateBlightfallIcon(self)
         local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
         local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
         blightState = { step = nextStep, delay = delay, started = GetTime() }
-        blightLastCue = nil
         return
     elseif raw < -BLIGHTFALL_GRACE then
         blightState = nil
@@ -1054,28 +1020,16 @@ local function UpdateBlightfallIcon(self)
         self:Hide()
         return
     end
-    local _, label, iconID = BlightfallStepInfo(blightState.step)
+    local _, _, iconID = BlightfallStepInfo(blightState.step)
     self.icon:SetTexture(iconID)
     if raw <= 0 then
-        self.time:SetText("NOW")
-        self.label:SetText(label)
+        -- The ready glow is the whole "cast it now" signal; a countdown that
+        -- has run out has no number left to show, so the field goes empty.
+        self.time:SetText("")
         if not self._glowActive then StartBlightfallReadyGlow(self) end
     else
         self.time:SetText(string.format("%.1f", raw))
-        self.label:SetText(label)
         StopBlightfallReadyGlow(self)
-    end
-    local cue
-    if raw <= 0.05 then cue = 0
-    else
-        local rounded = math.ceil(raw)
-        if rounded == 5 or rounded == 3 or rounded == 2 or rounded == 1 then cue = rounded end
-    end
-    if cue ~= nil and cue ~= blightLastCue then
-        blightLastCue = cue
-        if cue == 5 then BlightfallSpeak(label .. " in", false)
-        elseif cue == 0 then BlightfallSpeak("Now", true)
-        else BlightfallSpeak(tostring(cue), false) end
     end
 end
 
@@ -1102,9 +1056,6 @@ local function CreateBlightfallIconFrame()
     f.time:SetTextColor(1, 1, 1, 1)
     f.time:SetShadowColor(0, 0, 0, 1)
     f.time:SetShadowOffset(1, -1)
-    f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    f.label:SetPoint("TOP", f, "BOTTOM", 0, -4)
-    f.label:SetTextColor(0.82, 0.55, 1.00, 1)
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         local s = BlightfallSettings()
@@ -1128,7 +1079,6 @@ local function ApplyBlightfallSettings()
     local iconFrame = CreateBlightfallIconFrame()
     local fontSize = math.max(10, math.min(32, s.fontSize or 18))
     iconFrame.time:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
-    iconFrame.label:SetFont(STANDARD_TEXT_FONT, math.max(10, fontSize - 4), "OUTLINE")
     local iconSize = math.max(36, math.min(128, s.iconSize or 64))
     iconFrame:SetSize(iconSize, iconSize)
     iconFrame:EnableMouse(not s.iconLocked or blightTest)
@@ -1185,7 +1135,6 @@ function addon:OnBlightfallChainSpellCast(spellID)
     else
         return
     end
-    blightLastCue = nil
     ApplyBlightfallSettings()
     local iconFrame = CreateBlightfallIconFrame()
     if blightState then
@@ -1203,7 +1152,6 @@ function addon:TestBlightfallTracker()
     if not s then return end
     blightTest = true
     blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
-    blightLastCue = nil
     local iconFrame = CreateBlightfallIconFrame()
     ApplyBlightfallSettings()
     -- The test must be visible even while the feature itself is switched off,
@@ -1513,6 +1461,57 @@ SlashCmdList["DKFORCE"] = function(msg)
         end
     elseif cmd == "debug" then
         addon:ToggleDebug()
+    elseif cmd == "blight" then
+        -- Read-only instrumentation for the Blightfall prompt.  Four separate
+        -- gates each hide the icon silently, so this prints the live value of
+        -- every one of them rather than guessing which is closed.  Nothing
+        -- here changes state, and every API call is guarded so the command
+        -- cannot itself error on a client that returns something unexpected.
+        local function say(text) print("|cffcc0000DK Force:|r " .. text) end
+        local function yn(v) return v and "true" or "false" end
+        local function spellKnown(id)
+            if not IsPlayerSpell then return "IsPlayerSpell unavailable" end
+            local ok, res = pcall(IsPlayerSpell, id)
+            if not ok then return "error" end
+            return yn(res)
+        end
+        say("--- Blightfall diagnostic ---")
+        local db = DKForceDB and DKForceDB.blightfallChain
+        if db then
+            say("DKForceDB.blightfallChain: present, enabled = " .. yn(db.enabled))
+        else
+            say("DKForceDB.blightfallChain: MISSING")
+        end
+        local okSpec, specID = pcall(addon.GetActiveSpecID, addon)
+        say("GetActiveSpecID(): " .. (okSpec and tostring(specID) or "error"))
+        local okUnholy, unholy = pcall(addon.IsUnholySpec, addon)
+        say("IsUnholySpec(): " .. (okUnholy and yn(unholy) or "error"))
+        say("IsPlayerSpell(1271967) Blightfall gate: " .. spellKnown(1271967))
+        say("IsPlayerSpell(1233448) Dark Transformation: " .. spellKnown(1233448))
+        say("IsPlayerSpell(343294) Soul Reaper: " .. spellKnown(343294))
+        local spellName = "nil"
+        if C_Spell and C_Spell.GetSpellInfo then
+            local ok, info = pcall(C_Spell.GetSpellInfo, 1271967)
+            if ok then
+                if type(info) == "table" and info.name then spellName = info.name
+                elseif type(info) == "string" then spellName = info end
+            end
+        end
+        say("C_Spell.GetSpellInfo(1271967) name: " .. spellName)
+        if blightState then
+            local remaining = blightState.delay - (GetTime() - blightState.started)
+            say(string.format("blightState: step = %s, remaining = %.2f",
+                tostring(blightState.step), remaining))
+        else
+            say("blightState: nil")
+        end
+        say("blightTest: " .. yn(blightTest))
+        if blightIconFrame then
+            local okShown, shown = pcall(blightIconFrame.IsShown, blightIconFrame)
+            say("blightIconFrame: exists, IsShown() = " .. (okShown and yn(shown) or "error"))
+        else
+            say("blightIconFrame: not created")
+        end
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false
@@ -1529,6 +1528,7 @@ SlashCmdList["DKFORCE"] = function(msg)
             print("|cffcc0000DK Force:|r /dkf scan - Rescan action bars")
             print("|cffcc0000DK Force:|r /dkf cdmscan - Rescan Cooldown Manager")
             print("|cffcc0000DK Force:|r /dkf debug - Toggle debug logging")
+            print("|cffcc0000DK Force:|r /dkf blight - Blightfall prompt diagnostic")
             print("|cffcc0000DK Force:|r /dkf minimap - Show Minimap button")
         end
     end

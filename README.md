@@ -20,7 +20,7 @@ Built for personal use. Not distributed, and not tracking upstream.
 - **Sudden Doom glows** — one switch enables the proc glow; Death Coil and
   Epidemic then each have their own style, colour and appearance page.
 - **Blightfall & Soul Reaper prompt** — a movable icon showing the next spell in
-  the chain with a countdown, a ready glow, and an optional spoken callout.
+  the chain with a countdown and a ready glow.
   Dark Transformation starts the Soul Reaper countdown; casting Soul Reaper
   starts the Blightfall one. It runs only while **Blightfall is talented** — it
   is gated on the talent itself, not on a hero specialisation.
@@ -74,6 +74,7 @@ Slash commands:
 | `/dkf scan` | Rescan action bars |
 | `/dkf cdmscan` | Rescan Cooldown Manager tracked items |
 | `/dkf debug` | Toggle debug logging |
+| `/dkf blight` | Print the Blightfall prompt diagnostic |
 | `/dkf minimap` | Show the minimap button again |
 
 ## Installation

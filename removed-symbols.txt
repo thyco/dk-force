@@ -113,3 +113,9 @@ _lastCDMScanAdded
 isRunic
 previewBar
 PAGE_LABEL
+BlightfallSpeak
+BlightfallFallbackSound
+blightVoiceID
+blightLastCue
+soundEnabled
+soundVolume

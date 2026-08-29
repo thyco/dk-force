@@ -638,25 +638,19 @@ function addon:CreateConfigPanel(standalone)
         page.enable = CreateCheck(page.settingsCard, "Enable the chain prompt", 14, -76,
             function() return settings().enabled end,
             function(v) settings().enabled = v; changed() end)
-        page.sound = CreateCheck(page.settingsCard, "Voice / sound countdown", 14, -104,
-            function() return settings().soundEnabled end,
-            function(v) settings().soundEnabled = v end)
-        page.soundVolume = CreateSlider(page.settingsCard, "Voice Volume", 14, -138, 250, 0, 100, 5,
-            function() return settings().soundVolume end,
-            function(v) settings().soundVolume = v end)
-        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, -188, 250, 1, 12, 0.5,
+        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, -110, 250, 1, 12, 0.5,
             function() return settings().soulReaperDelay end,
             function(v) settings().soulReaperDelay = v; changed() end)
-        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall delay after Soul Reaper", 14, -238, 250, 1, 15, 0.5,
+        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall delay after Soul Reaper", 14, -160, 250, 1, 15, 0.5,
             function() return settings().blightfallDelay end,
             function(v) settings().blightfallDelay = v; changed() end)
-        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -288, 250, 36, 128, 1,
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -210, 250, 36, 128, 1,
             function() return settings().iconSize or 64 end,
             function(v) settings().iconSize = v; changed() end)
-        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, -338, 250, 10, 32, 1,
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, -260, 250, 10, 32, 1,
             function() return settings().fontSize or 18 end,
             function(v) settings().fontSize = v; changed() end)
-        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 14, -388,
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 14, -310,
             function() return settings().iconLocked end,
             function(v) settings().iconLocked = v; changed() end)
         -- Kept short and raised so it still fits the shorter canvas Blizzard's
@@ -664,7 +658,7 @@ function addon:CreateConfigPanel(standalone)
         page.hint = CreateText(page.settingsCard,
             "Unholy, Blightfall talented.  Dark Transformation starts the Soul Reaper "
             .. "countdown; Soul Reaper starts the Blightfall one.  Unlock to drag the icon.",
-            14, -414, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+            14, -336, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
 
         page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)
 
@@ -693,8 +687,7 @@ function addon:CreateConfigPanel(standalone)
 
         page.refresh = function()
             page.selector.refresh()
-            page.enable.refresh(); page.sound.refresh()
-            page.soundVolume.refresh(); page.soulDelay.refresh(); page.blightDelay.refresh()
+            page.enable.refresh(); page.soulDelay.refresh(); page.blightDelay.refresh()
             page.iconSize.refresh(); page.fontSize.refresh(); page.iconLock.refresh()
             page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance()
             RefreshPreview(page)
@@ -781,9 +774,9 @@ function addon:CreateConfigPanel(standalone)
         activePage:Show()
         for _, page in pairs(pages) do if page ~= activePage then page:Hide() end end
         testActive = false; testButton:SetText("Test")
-        -- The Blightfall test drives a screen-centred frame and TTS cues that
-        -- nothing on an action bar would clear, so it must never outlive the
-        -- panel.  This is a no-op when no test is running.
+        -- The Blightfall test drives a screen-centred frame that nothing on an
+        -- action bar would clear, so it must never outlive the panel.  This is
+        -- a no-op when no test is running.
         addon:StopBlightfallTest()
         cdmCheck:SetShown(pageKey == "festering" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
         cdmCheck.Text:SetText("Use Cooldown Manager (instead of action bars)")
