@@ -174,33 +174,41 @@ if not graceSource then
 end
 assert(load(graceSource, "ghoul-grace"))()
 
--- A ghoul that genuinely drops must register instantly: a late reminder is a
--- useless one, so the grace deliberately runs one way only.
-check("drop is reported immediately", addon:StableGhoulShown(false, 100), false)
+-- Debounced symmetrically: a change is reported only once the raw value has
+-- held for the grace.  Both edges matter -- filtering only the release turns a
+-- one-tick blink into a grace-long flash, which is worse than not filtering at
+-- all, and is exactly what the first attempt at this shipped.
 
--- The blink this exists for: gone, back a tenth of a second later.  The verdict
--- has to hold, or the whole reminder switches off and the icon snaps back to
--- full colour -- which is the flicker itself.
-check("blink at 0.1s: still missing", addon:StableGhoulShown(true, 100.1), false)
-check("blink at 0.3s: still missing", addon:StableGhoulShown(true, 100.3), false)
+-- Steady presence is adopted at once.  There is no prior state to debounce
+-- against on the first reading, and holding "unknown" would stall every
+-- registration for a third of a second.
+check("first reading adopted", addon:StableGhoulShown(true, 100), true)
 
--- A real return still clears, and promptly.
-check("genuine return at 0.5s: present", addon:StableGhoulShown(true, 100.5), true)
+-- A one-tick hide must not reach the reminder at all.  This is the flicker:
+-- unfiltered, the icon snapped to grey and back.
+check("blink hidden at 0.1s: still present", addon:StableGhoulShown(false, 100.1), true)
+check("blink hidden at 0.2s: still present", addon:StableGhoulShown(false, 100.2), true)
+check("icon back: still present", addon:StableGhoulShown(true, 100.3), true)
 
--- Steady presence never fabricates a missing verdict.  Without the
--- was-missing check the grace would fire at login, flashing the reminder on
--- while the ghoul had been up the whole time.
-check("steady presence stays present", addon:StableGhoulShown(true, 101), true)
-check("steady presence, later still", addon:StableGhoulShown(true, 200), true)
+-- A genuine drop is adopted once it has held for the grace.
+check("gone 0.1s: not yet", addon:StableGhoulShown(false, 101), true)
+check("gone 0.2s: not yet", addon:StableGhoulShown(false, 101.2), true)
+check("gone past the grace: missing", addon:StableGhoulShown(false, 101.5), false)
 
--- Dropping again after a clear restarts the cycle rather than staying latched.
-check("drops again: missing at once", addon:StableGhoulShown(false, 201), false)
-check("returns, inside grace", addon:StableGhoulShown(true, 201.2), false)
-check("returns, past grace", addon:StableGhoulShown(true, 201.6), true)
+-- And the same filtering applies coming back, so a blink toward present does
+-- not clear a reminder that should stay up.
+check("blink present at 0.1s: still missing", addon:StableGhoulShown(true, 101.6), false)
+check("blink present at 0.2s: still missing", addon:StableGhoulShown(true, 101.7), false)
+check("back to hidden: still missing", addon:StableGhoulShown(false, 101.8), false)
 
--- No icon registered clears the latch, so a reload cannot leave it stuck.
-check("no icon registered", addon:StableGhoulShown(nil, 202), nil)
-check("after no icon, a drop still reports", addon:StableGhoulShown(false, 202.1), false)
+-- A genuine return clears once it holds.  The first sample after the raw value
+-- flips only starts the clock; it is the later one that adopts.
+check("return, clock just started: still missing", addon:StableGhoulShown(true, 102.5), false)
+check("returned past the grace: present", addon:StableGhoulShown(true, 102.9), true)
+
+-- No icon registered resets, so a reload cannot leave the debounce latched.
+check("no icon registered", addon:StableGhoulShown(nil, 103), nil)
+check("after reset, first reading adopted", addon:StableGhoulShown(false, 103.1), false)
 
 if failures == 0 then
     print(string.format("Lesser Ghoul reminder gating             OK (%d checks)", checks))

@@ -252,40 +252,40 @@ end
 
 -- Lesser Ghoul return grace
 --
--- The tracked icon blinks: it drops hidden and comes back within a tick or two,
--- and each blink switched the whole reminder off and on again.  On the glow
--- that is a brief flash; on the desaturation it is an icon snapping back to
--- full colour and away again, which is what "flickers to the saturated version"
--- turned out to mean.
+-- The tracked icon blinks, and each blink used to switch the whole reminder off
+-- or on: on the glow a brief flash, on the desaturation an icon snapping
+-- between grey and full colour.  That is the flicker.
 --
--- Hold a "missing" verdict briefly when the icon returns, so a blink is
--- filtered but a genuine refresh still clears within half a second.  This is
--- the same shape as the Stand In Death and Decay grace period, which exists to
--- filter the Cleaving Strikes blink for exactly the same reason.
+-- Debounce it symmetrically -- report a change only once the raw value has held
+-- steady for the grace -- so a blink in either direction is filtered.  The first
+-- attempt at this held the MISSING verdict when the icon came back, which is the
+-- wrong edge: a one-tick hide then turned the reminder on and pinned it there
+-- for the whole grace, making a single-tick flash into a four-tick one.  Filter
+-- the onset and the release both, or fixing one edge just lengthens the other.
 --
--- The grace applies ONLY on the way back.  A ghoul that really drops still
--- triggers instantly, because a late reminder is a useless one.
-local GHOUL_RETURN_GRACE = 0.40
-local ghoulBackSince = nil
-local ghoulWasMissing = false
+-- The cost is that a genuine change is acted on a third of a second late.  The
+-- Stand In Death and Decay reminder makes the same trade for the same reason.
+local GHOUL_STABLE_TIME = 0.35
+local ghoulRawValue = nil
+local ghoulRawSince = nil
+local ghoulStable = nil
 function addon:StableGhoulShown(rawShown, now)
     if rawShown == nil then
-        ghoulBackSince, ghoulWasMissing = nil, false
+        ghoulRawValue, ghoulRawSince, ghoulStable = nil, nil, nil
         return nil
     end
-    if not rawShown then
-        ghoulBackSince, ghoulWasMissing = nil, true
-        return false
+    if rawShown ~= ghoulRawValue then
+        ghoulRawValue, ghoulRawSince = rawShown, now
     end
-    -- Present.  Only worth holding if we were reporting it missing; without
-    -- this the reminder would flash on for the grace period at login, when the
-    -- ghoul has been up all along.
-    if ghoulWasMissing then
-        ghoulBackSince = ghoulBackSince or now
-        if (now - ghoulBackSince) < GHOUL_RETURN_GRACE then return false end
+    -- First reading after a reset is adopted outright: there is no previous
+    -- state to debounce against, and holding nil would report "unknown" for a
+    -- third of a second every time the icon is registered.
+    if ghoulStable == nil then
+        ghoulStable = rawShown
+    elseif rawShown ~= ghoulStable and (now - (ghoulRawSince or now)) >= GHOUL_STABLE_TIME then
+        ghoulStable = rawShown
     end
-    ghoulBackSince, ghoulWasMissing = nil, false
-    return true
+    return ghoulStable
 end
 
 local ghoulWatcher = CreateFrame("Frame")
