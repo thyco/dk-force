@@ -121,11 +121,35 @@ local function ApplyDim(record)
         return 0
     end
 
-    if record.texture then
-        tex:SetTexture(record.texture)
-        local c = record.texCoord
-        if c then
-            tex:SetTexCoord(c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8])
+    -- Read the art and the crop LIVE, falling back to what was cached.
+    --
+    -- Caching the crop at scan time was the bug behind the stray bevel.  WoW
+    -- icon files carry a raised border painted into the art, and buttons hide it
+    -- by zooming ~8% with SetTexCoord.  If that zoom is applied or changed after
+    -- the scan -- which is a second after login -- the cached value is the
+    -- uncropped 0,1,0,1, so the copy drew the full art, bevel and all, at a
+    -- slightly wider zoom than the icon beside it.  Reading live keeps the copy
+    -- in step with whatever the button is currently doing, including a proc
+    -- override swapping the art outright.
+    --
+    -- The cache remains the fallback: a Cooldown Manager item can answer with a
+    -- secret value in combat, which is why it exists at all.
+    local texture, coord = record.texture, record.texCoord
+    if record.icon then
+        local okTex, live = pcall(record.icon.GetTexture, record.icon)
+        if okTex and live then texture = live end
+        local okCoord, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy =
+            pcall(record.icon.GetTexCoord, record.icon)
+        if okCoord and ULx then
+            coord = { ULx, ULy, LLx, LLy, URx, URy, LRx, LRy }
+        end
+    end
+
+    if texture then
+        tex:SetTexture(texture)
+        if coord then
+            tex:SetTexCoord(coord[1], coord[2], coord[3], coord[4],
+                            coord[5], coord[6], coord[7], coord[8])
         else
             tex:SetTexCoord(0, 1, 0, 1)
         end
