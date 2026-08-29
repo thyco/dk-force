@@ -34,7 +34,7 @@ local scourgeTesting = false
 -- the Lesser Ghoul icon going hidden/shown for a tick, toggling the whole
 -- reminder off and on.  `defends` counts the first, `flips` the second.
 local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0,
-                iconSwaps = 0, tickFixes = 0, vertexColors = 0 }
+                iconSwaps = 0, tickFixes = 0, vertexColors = 0, overlays = {} }
 
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
@@ -179,6 +179,65 @@ end
 -- -- which matches a flicker that appears only in combat, when buttons update
 -- hardest.  `iconSwaps` counts it and the re-resolve repairs it; `tickFixes`
 -- counts the grey being found already lost, meaning no hook caught the clear.
+-- Everything measured so far has been on the icon TEXTURE, and it has come back
+-- clean every time: nothing desaturates it, repaints it, tints it or swaps it,
+-- yet the button visibly flashes in combat.  So look at the BUTTON instead.
+-- These are the regions Blizzard layers over an action button icon, and the
+-- spell highlight in particular pulses on a proc or on the assisted-rotation
+-- suggestion -- combat only, repeating, and bright enough over a grey icon to
+-- read as the colour coming back.
+local OVERLAY_REGIONS = {
+    "SpellHighlightTexture", "SpellHighlightAnim", "AssistedCombatRotationFrame",
+    "Flash", "InterruptDisplay", "overlay", "Border", "NewActionTexture",
+}
+
+local function AuditOverlays(frame)
+    for _, name in ipairs(OVERLAY_REGIONS) do
+        local region = frame and frame[name]
+        if region and region.IsShown then
+            local ok, shown = pcall(region.IsShown, region)
+            if ok and shown then
+                stats.overlays[name] = (stats.overlays[name] or 0) + 1
+            end
+        end
+    end
+end
+
+-- The bling is the bright flare Blizzard draws when a cooldown completes.  It
+-- fires once as the global cooldown ends and again for any other cooldown
+-- finishing on the same button -- "once after every GCD, sometimes more",
+-- exactly as reported -- and the Cooldown frame draws it, which is why none of
+-- the icon hooks could see it.  Against a coloured icon it reads as polish;
+-- against a grey one it is a white flash.
+--
+-- It only became visible when the desaturation stopped covering the Cooldown
+-- frame, which is the same change that exposed the GCD sweep.  Suppressing just
+-- the flare keeps the sweep.
+--
+-- The prior value is captured so releasing restores what the UI had rather than
+-- forcing bling on: a pack that turns it off globally must stay off.
+local function SetBling(frame, enabled)
+    local cooldown = frame and (frame.cooldown or frame.Cooldown)
+    if not (cooldown and cooldown.SetDrawBling) then return end
+    if enabled then
+        local prior = cooldown._dkfBlingPrior
+        if prior ~= nil then
+            pcall(cooldown.SetDrawBling, cooldown, prior)
+            cooldown._dkfBlingPrior = nil
+        end
+    else
+        if cooldown._dkfBlingPrior == nil then
+            local prior = true
+            if cooldown.GetDrawBling then
+                local ok, current = pcall(cooldown.GetDrawBling, cooldown)
+                if ok and current ~= nil then prior = current end
+            end
+            cooldown._dkfBlingPrior = prior
+        end
+        pcall(cooldown.SetDrawBling, cooldown, false)
+    end
+end
+
 local function ApplyToTable(icons, value)
     local applied = 0
     for frame, icon in pairs(icons) do
@@ -192,6 +251,11 @@ local function ApplyToTable(icons, value)
             TrackIcon(live)
             target = live
         end
+        -- Re-asserted every pass, like the desaturation: a button update can
+        -- put the flare back, and it only has to be off at the instant a
+        -- cooldown completes.
+        SetBling(frame, not value)
+        if value then AuditOverlays(frame) end
         if value and target and target.IsDesaturated then
             local ok, isDesaturated = pcall(target.IsDesaturated, target)
             if ok and isDesaturated == false then stats.tickFixes = stats.tickFixes + 1 end
@@ -333,6 +397,12 @@ function addon:PrintScourgeDimDiagnostic()
     print(("  tick fixes (grey lost with NO hook firing): %d"):format(stats.tickFixes))
     print(("  vertex tints applied over the grey: %d   last: %s")
         :format(stats.vertexColors, stats.lastVertex or "none"))
+    local seen = false
+    for name, count in pairs(stats.overlays) do
+        print(("  overlay VISIBLE over the grey icon: %s on %d ticks"):format(name, count))
+        seen = true
+    end
+    if not seen then print("  no known overlay region was ever visible over the grey icon") end
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
@@ -342,6 +412,7 @@ function addon:ResetScourgeDimDiagnostic()
     stats.viaSetTexture = 0
     stats.iconSwaps, stats.tickFixes = 0, 0
     stats.vertexColors, stats.lastVertex = 0, nil
+    stats.overlays = {}
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
