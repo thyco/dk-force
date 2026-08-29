@@ -61,19 +61,18 @@ end
 local function AttachDimTexture(frame, icon)
     if frame._dkfDimTexture then return frame._dkfDimTexture end
 
-    -- The icon's exact layer AND sublevel, not one above it.  Textures on the
-    -- same sublevel draw in creation order, so being created later is enough to
-    -- sit above the art -- and sharing the sublevel puts this in the identical
-    -- position in the stack as the icon it copies.  A sublevel above meant the
-    -- button's frame art fell between the two: the real icon showed through the
-    -- corner cut-outs while this copy was clipped by them.
+    -- One sublevel above the icon.  Sharing the icon's exact sublevel was tried
+    -- and does not work: same-sublevel draw order is not guaranteed to follow
+    -- creation order, and in practice the icon won, leaving the copy underneath
+    -- and the desaturation invisible.  Being one above is the only arrangement
+    -- that reliably covers the art.
     local layer, sublevel = "ARTWORK", 0
     if icon then
         local ok, iconLayer, iconSublevel = pcall(icon.GetDrawLayer, icon)
         if ok and iconLayer then layer, sublevel = iconLayer, iconSublevel or 0 end
     end
 
-    local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, sublevel)
+    local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, math.min(sublevel + 1, 7))
     if not (ok and tex) then return nil end
     if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
     tex:SetDesaturated(true)
