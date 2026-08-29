@@ -1,0 +1,22 @@
+## Interface: 120100
+## Title: DK Force
+## Notes: Personal Death Knight combat alerts for Unholy and Blood
+## Author: Thierry Collogne
+## Version: 0.1.0
+## IconTexture: Interface\AddOns\DKForce\Media\Icon.png
+## AddonCompartmentFunc: DKForce_AddonCompartmentClick
+## AddonCompartmentFuncOnEnter: DKForce_AddonCompartmentEnter
+## AddonCompartmentFuncOnLeave: DKForce_AddonCompartmentLeave
+
+## SavedVariables: DKForceDB
+
+## OptionalDeps: LibCustomGlow-1.0, HidingBar, EllesmereUICooldownManager
+
+Libs/LibStub/LibStub.lua
+Libs/LibCustomGlow-1.0/LibCustomGlow-1.0.lua
+
+Core.lua
+ButtonScanner.lua
+Config.lua
+MinimapButton.lua
+CDMHook.lua
