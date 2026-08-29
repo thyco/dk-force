@@ -47,6 +47,50 @@ local function CacheIconTexture(overlay)
     if not (icon and icon.GetTexture) then return end
     local ok, texture = pcall(icon.GetTexture, icon)
     if ok and texture then overlay._iconTexture = texture end
+
+    -- Copy the source icon's texture coordinates as well as its art.  WoW icon
+    -- files carry a light grey bevel baked into the image, and UI packs crop it
+    -- off with SetTexCoord so their own border can show instead.  A copy that
+    -- takes the texture but not the crop draws that bevel back over a border
+    -- the user deliberately restyled -- the greyed icon then looks like stock
+    -- Blizzard art sitting inside a custom button.
+    if icon.GetTexCoord then
+        local okCoord, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = pcall(icon.GetTexCoord, icon)
+        if okCoord and ULx then
+            overlay._iconTexCoord = { ULx, ULy, LLx, LLy, URx, URy, LRx, LRy }
+        end
+    end
+end
+
+-- The GCD sweep is drawn by the button's own Cooldown frame.  CreateOverlay
+-- puts every overlay at target level +10 so a glow draws above everything on
+-- the button, which for an opaque desaturation also means covering that sweep.
+-- Drop this one overlay to just under the cooldown: the icon still greys out,
+-- and the spin still reads through it.  Only this file does it -- the glows are
+-- meant to sit on top.
+local function LowerBelowCooldown(overlay)
+    local target = overlay._targetFrame
+    if not (target and target.GetFrameLevel) then return end
+    local ok, base = pcall(target.GetFrameLevel, target)
+    if not (ok and base) then return end
+
+    local level = base + 1
+    local cooldown = target.cooldown or target.Cooldown
+    if cooldown and cooldown.GetFrameLevel then
+        local okCD, cdLevel = pcall(cooldown.GetFrameLevel, cooldown)
+        -- A cooldown sitting at base + 1 leaves no level in between; equal
+        -- levels still resolve in our favour, because a child frame draws after
+        -- the parent regions it shares a level with.
+        if okCD and cdLevel and cdLevel > base then level = cdLevel - 1 end
+    end
+    overlay:SetFrameLevel(level)
+end
+
+local function BuildOverlay(targetFrame, spellKey)
+    local overlay = AttachDimTexture(addon:CreateOverlay(targetFrame, spellKey))
+    LowerBelowCooldown(overlay)
+    CacheIconTexture(overlay)
+    return overlay
 end
 
 local function ApplyDim(overlay)
@@ -62,9 +106,18 @@ local function ApplyDim(overlay)
     local tex = overlay._dimTexture
     if overlay._iconTexture then
         tex:SetTexture(overlay._iconTexture)
+        local coord = overlay._iconTexCoord
+        if coord then
+            tex:SetTexCoord(coord[1], coord[2], coord[3], coord[4], coord[5], coord[6], coord[7], coord[8])
+        else
+            tex:SetTexCoord(0, 1, 0, 1)
+        end
         tex:SetDesaturated(true)
         tex:SetVertexColor(1, 1, 1, 1)
     else
+        -- Reset the crop first: the veil is a solid colour, and a leftover
+        -- icon crop would shrink it away from the icon's edges.
+        tex:SetTexCoord(0, 1, 0, 1)
         -- Registered mid-combat, or a frame that exposes no icon region, so no
         -- texture was ever cached.  Fall back to a dark veil: the reminder
         -- still reads as "not this one" instead of silently doing nothing.
@@ -107,9 +160,7 @@ function addon:CreateScourgeOverlays()
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "scourgeStrike" then
             for _, button in ipairs(buttons) do
-                local overlay = AttachDimTexture(addon:CreateOverlay(button, spellKey))
-                CacheIconTexture(overlay)
-                scourgeOverlays[button] = overlay
+                scourgeOverlays[button] = BuildOverlay(button, spellKey)
             end
         end
     end
@@ -120,8 +171,7 @@ end
 -- same way the Festering and Lesser Ghoul frames are registered.
 function addon:RegisterCDMScourgeFrame(frame)
     if not addon:IsScourgeDimEnabled() or cdmScourgeOverlays[frame] then return end
-    local overlay = AttachDimTexture(addon:CreateOverlay(frame, "scourgeStrike"))
-    CacheIconTexture(overlay)
+    local overlay = BuildOverlay(frame, "scourgeStrike")
     cdmScourgeOverlays[frame] = overlay
     if scourgeDimmed then ApplyDim(overlay) end
 end
