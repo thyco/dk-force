@@ -80,15 +80,15 @@ local function AttachDimTexture(frame, icon)
     -- Cooldown Manager skins with oversized containers need.
     if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
     -- Inherit the icon's masks.  This is what every earlier attempt missed:
-    -- /dkf icon showed the copy and the icon sharing texture, size, layer and
+    -- A texture dump showed the copy and the icon sharing texture, size, layer and
     -- texture coordinates exactly, so the visible difference could not be any of
     -- them.  Blizzard's action buttons apply a MaskTexture to round the icon's
     -- corners -- the flat modern look -- and that is what clips away the raised
     -- bevel painted into every Interface\\Icons file.  SetAllPoints copies
     -- geometry, not masks, so the copy was the raw square art, bevel included.
     --
-    -- A MaskTexture is not a Texture, so it never appeared in the dump either,
-    -- which is why the numbers all matched while the buttons plainly did not.
+    -- A MaskTexture is not a Texture, so it did not appear in that dump either,
+    -- which is why every number matched while the buttons plainly did not.
     if icon and icon.GetNumMaskTextures and tex.AddMaskTexture then
         local okCount, count = pcall(icon.GetNumMaskTextures, icon)
         for index = 1, (okCount and count or 0) do
@@ -274,89 +274,4 @@ function addon:TestScourgeDim()
         print("|cffcc0000DK Force:|r Scourge Strike desaturated on " .. count .. " icon(s).")
     end
     return count
-end
-
--- /dkf icon -- dump every texture on the first tracked Scourge Strike button.
---
--- Five attempts at the residual visual difference have each been a guess about
--- which property differs: draw layer, anchor rect, texture coordinates.  Print
--- them all side by side instead, with this addon's own copy marked, so the
--- difference can be read off rather than inferred.
-local function Describe(region, mine)
-    local kind = "?"
-    if region.GetObjectType then
-        local ok, value = pcall(region.GetObjectType, region)
-        if ok then kind = value end
-    end
-    if kind ~= "Texture" then return end
-
-    local layer, sublevel = "?", "?"
-    if region.GetDrawLayer then
-        local ok, l, sl = pcall(region.GetDrawLayer, region)
-        if ok then layer, sublevel = tostring(l), tostring(sl) end
-    end
-    local w, h = 0, 0
-    if region.GetSize then
-        local ok, rw, rh = pcall(region.GetSize, region)
-        if ok then w, h = rw or 0, rh or 0 end
-    end
-    local texture = "none"
-    if region.GetTexture then
-        local ok, value = pcall(region.GetTexture, region)
-        if ok and value then texture = tostring(value) end
-    end
-    local coords = "?"
-    if region.GetTexCoord then
-        -- All eight returns: printing the first four showed ULx,ULy,LLx,LLy and
-        -- made every texture read as uncropped regardless of its real crop.
-        local ok, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = pcall(region.GetTexCoord, region)
-        if ok and ULx then
-            coords = string.format("%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f",
-                ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)
-        end
-    end
-    local alpha, shown, desaturated = "?", "?", "?"
-    if region.GetAlpha then
-        local ok, value = pcall(region.GetAlpha, region)
-        if ok then alpha = string.format("%.2f", value or 1) end
-    end
-    if region.IsShown then
-        local ok, value = pcall(region.IsShown, region)
-        if ok then shown = tostring(value) end
-    end
-    if region.IsDesaturated then
-        local ok, value = pcall(region.IsDesaturated, region)
-        if ok then desaturated = tostring(value) end
-    end
-
-    local masks = "?"
-    if region.GetNumMaskTextures then
-        local ok, count = pcall(region.GetNumMaskTextures, region)
-        if ok then masks = tostring(count) end
-    end
-    print(("%s%s %s.%s  %.0fx%.0f  shown=%s alpha=%s desat=%s masks=%s")
-        :format(mine and "|cff00ff00>> OURS|r " or "   ", kind, layer, sublevel, w, h, shown, alpha, desaturated, masks))
-    print(("      texcoord %s   texture %s"):format(coords, texture))
-end
-
-function addon:PrintIconDump()
-    local frame
-    for f in pairs(scourgeOverlays) do frame = f break end
-    if not frame then
-        print("|cffcc0000DK Force:|r No tracked Scourge Strike button. Use Rescan Bars first.")
-        return
-    end
-    local label = "?"
-    if frame.GetDebugName then
-        local ok, name = pcall(frame.GetDebugName, frame)
-        if ok then label = name end
-    end
-    print("|cffcc0000DK Force:|r Textures on " .. tostring(label) .. ":")
-    local ours = frame._dkfDimTexture
-    if frame.GetRegions then
-        local ok, list = pcall(function() return { frame:GetRegions() } end)
-        if ok then
-            for _, region in ipairs(list) do Describe(region, region == ours) end
-        end
-    end
 end
