@@ -25,7 +25,12 @@ local function DnDMissingSettings()
     return DKForceDB and DKForceDB.bloodDndMissing
 end
 
-local function DnDMissingEnabled()
+-- A method rather than a file-local because CDMHook.lua gates its Cooldown
+-- Manager registration on the same switch, and used to carry its own copy of
+-- this function.  Two definitions of one gate drift apart silently: a condition
+-- added here would leave the registration path disagreeing with the display
+-- path, and the feature would half-work.
+function addon:IsDnDMissingEnabled()
     local settings = DnDMissingSettings()
     return settings and settings.enabled or false
 end
@@ -58,7 +63,7 @@ function addon:StopDnDMissingGlow()
 end
 
 function addon:ShowDnDMissingGlow()
-    if not DnDMissingEnabled() then return end
+    if not addon:IsDnDMissingEnabled() then return end
     dndMissingGlowActive = true
 
     local function applyOverlay(overlay)
@@ -87,7 +92,7 @@ function addon:CreateDnDMissingOverlays()
     end
     wipe(dndMissingBarOverlays)
 
-    if not DnDMissingEnabled() then return end
+    if not addon:IsDnDMissingEnabled() then return end
 
     local buttons = (addon.trackedButtons or {}).deathAndDecay
     if buttons then
@@ -100,7 +105,7 @@ function addon:CreateDnDMissingOverlays()
 end
 
 function addon:RegisterCDMDnDMissingFrame(frame)
-    if not DnDMissingEnabled() or cdmDnDMissingOverlays[frame] then return end
+    if not addon:IsDnDMissingEnabled() or cdmDnDMissingOverlays[frame] then return end
     cdmDnDMissingOverlays[frame] = addon:CreateOverlay(frame, "deathAndDecay")
     if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
 end
@@ -160,7 +165,7 @@ dndMissingWatcher:SetScript("OnUpdate", function(_, elapsed)
     local sincePoll = dndMissingElapsed
     dndMissingElapsed = 0
 
-    local missing = DnDMissingEnabled() and addon:IsBloodSpec() and bloodDnDBuffFrame
+    local missing = addon:IsDnDMissingEnabled() and addon:IsBloodSpec() and bloodDnDBuffFrame
         and InCombatLockdown() and not bloodDnDBuffFrame:IsShown() or false
 
     if missing then
