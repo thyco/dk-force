@@ -48,10 +48,52 @@ local function GetIconTexture(frame)
     return nil
 end
 
+local applyingDesaturation = false
+
 local function SetIconDesaturated(icon, value)
     if not icon then return 0 end
+    applyingDesaturation = true
     pcall(icon.SetDesaturated, icon, value)
+    applyingDesaturation = false
     return 1
+end
+
+-- Re-asserting on the watcher's 10Hz tick alone is not enough, and the gap is
+-- visible: Blizzard's action buttons re-check range on a 0.2s ticker and call
+-- SetDesaturated from the result, so the icon sat in full colour for up to a
+-- tenth of a second, twice a second.  That reads as a flicker.
+--
+-- So put the grey back in the same call that cleared it, leaving no frame in
+-- between.  Hooking the icon's own SetDesaturated rather than the button's
+-- update function -- which is what GreyOnCooldown hooks -- means this holds
+-- whoever repaints it, Blizzard or ElvUI or Masque or a border addon, without
+-- needing to know which update path each one uses.
+local function HookIcon(icon)
+    if not icon or icon._dkfDesaturationHooked then return end
+    icon._dkfDesaturationHooked = true
+    local ok = pcall(hooksecurefunc, icon, "SetDesaturated", function(self, value)
+        -- `value` truthy means someone just set the grey we want anyway, and
+        -- the guard keeps our own writes from re-entering.
+        if applyingDesaturation or value then return end
+        if not (scourgeDimmed or scourgeTesting) then return end
+        -- Only defend icons still tracked: a button that dropped out of the
+        -- last scan keeps its hook, and must not be forced grey by it.
+        if not self._dkfScourgeTracked then return end
+        SetIconDesaturated(self, true)
+    end)
+    if not ok then icon._dkfDesaturationHooked = nil end
+end
+
+local function TrackIcon(icon)
+    if not icon then return end
+    icon._dkfScourgeTracked = true
+    HookIcon(icon)
+end
+
+local function UntrackIcons(icons)
+    for _, icon in pairs(icons) do
+        if icon then icon._dkfScourgeTracked = nil end
+    end
 end
 
 -- Applied to every tracked icon rather than only on a state change, because
@@ -89,12 +131,15 @@ function addon:CollectScourgeIcons()
     -- Release anything the previous scan left grey; a button that is no longer
     -- tracked would otherwise keep the desaturation with nothing to clear it.
     ApplyAll(false)
+    UntrackIcons(scourgeIcons)
     wipe(scourgeIcons)
 
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "scourgeStrike" then
             for _, button in ipairs(buttons) do
-                scourgeIcons[button] = GetIconTexture(button)
+                local icon = GetIconTexture(button)
+                scourgeIcons[button] = icon
+                TrackIcon(icon)
             end
         end
     end
@@ -108,6 +153,7 @@ function addon:RegisterCDMScourgeFrame(frame)
     local icon = GetIconTexture(frame)
     if not icon then return end
     cdmScourgeIcons[frame] = icon
+    TrackIcon(icon)
     if scourgeDimmed or scourgeTesting then SetIconDesaturated(icon, true) end
 end
 
@@ -116,10 +162,14 @@ end
 -- has to re-resolve frames whose icon was missing when they were registered.
 function addon:RefreshScourgeDim()
     for button in pairs(scourgeIcons) do
-        scourgeIcons[button] = GetIconTexture(button)
+        local icon = GetIconTexture(button)
+        scourgeIcons[button] = icon
+        TrackIcon(icon)
     end
     for frame in pairs(cdmScourgeIcons) do
-        cdmScourgeIcons[frame] = GetIconTexture(frame)
+        local icon = GetIconTexture(frame)
+        cdmScourgeIcons[frame] = icon
+        TrackIcon(icon)
     end
     if scourgeDimmed or scourgeTesting then ApplyAll(true) end
 end
