@@ -250,44 +250,6 @@ function addon:EvaluateGhoulState(settings, frameShown, inCombat)
            (settings.lesserGhoulDim and missing) or false
 end
 
--- Lesser Ghoul return grace
---
--- The tracked icon blinks, and each blink used to switch the whole reminder off
--- or on: on the glow a brief flash, on the desaturation an icon snapping
--- between grey and full colour.  That is the flicker.
---
--- Debounce it symmetrically -- report a change only once the raw value has held
--- steady for the grace -- so a blink in either direction is filtered.  The first
--- attempt at this held the MISSING verdict when the icon came back, which is the
--- wrong edge: a one-tick hide then turned the reminder on and pinned it there
--- for the whole grace, making a single-tick flash into a four-tick one.  Filter
--- the onset and the release both, or fixing one edge just lengthens the other.
---
--- The cost is that a genuine change is acted on a third of a second late.  The
--- Stand In Death and Decay reminder makes the same trade for the same reason.
-local GHOUL_STABLE_TIME = 0.35
-local ghoulRawValue = nil
-local ghoulRawSince = nil
-local ghoulStable = nil
-function addon:StableGhoulShown(rawShown, now)
-    if rawShown == nil then
-        ghoulRawValue, ghoulRawSince, ghoulStable = nil, nil, nil
-        return nil
-    end
-    if rawShown ~= ghoulRawValue then
-        ghoulRawValue, ghoulRawSince = rawShown, now
-    end
-    -- First reading after a reset is adopted outright: there is no previous
-    -- state to debounce against, and holding nil would report "unknown" for a
-    -- third of a second every time the icon is registered.
-    if ghoulStable == nil then
-        ghoulStable = rawShown
-    elseif rawShown ~= ghoulStable and (now - (ghoulRawSince or now)) >= GHOUL_STABLE_TIME then
-        ghoulStable = rawShown
-    end
-    return ghoulStable
-end
-
 local ghoulWatcher = CreateFrame("Frame")
 local ghoulElapsed = 0
 ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
@@ -297,8 +259,7 @@ ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
 
     local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
     -- nil when no icon is registered, false when one is registered and hidden.
-    local rawShown = lesserGhoulFrame and lesserGhoulFrame:IsShown()
-    local frameShown = addon:StableGhoulShown(rawShown, GetTime())
+    local frameShown = lesserGhoulFrame and lesserGhoulFrame:IsShown()
     local glow, dim = addon:EvaluateGhoulState(settings, frameShown, InCombatLockdown())
     SetFesteringReason("ghoul", glow)
     addon:SetScourgeDimmed(dim)
