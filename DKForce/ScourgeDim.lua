@@ -35,7 +35,7 @@ local scourgeTesting = false
 -- reminder off and on.  `defends` counts the first, `flips` the second.
 local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0,
                 iconSwaps = 0, tickFixes = 0, vertexColors = 0, overlays = {},
-                frameFixes = 0, frames = 0 }
+                frameFixes = 0, frames = 0, appears = {} }
 
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
@@ -406,6 +406,14 @@ function addon:PrintScourgeDimDiagnostic()
         seen = true
     end
     if not seen then print("  no known overlay region was ever visible over the grey icon") end
+    local any = false
+    for label, count in pairs(stats.appears) do
+        if count > 1 then
+            print(("  APPEARED over the grey icon %d times: %s"):format(count, label))
+            any = true
+        end
+    end
+    if not any then print("  nothing on the button ever became visible while grey") end
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
@@ -417,6 +425,7 @@ function addon:ResetScourgeDimDiagnostic()
     stats.vertexColors, stats.lastVertex = 0, nil
     stats.overlays = {}
     stats.frameFixes, stats.frames = 0, 0
+    stats.appears = {}
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
@@ -431,12 +440,71 @@ end
 -- So re-assert every frame while dimmed.  This measures at full rate and closes
 -- the window to under one frame at the same time.  It runs only while the
 -- reminder is actually showing, over the two or three icons it tracks.
+-- FRAME fixes came back 0 at full frame rate: the grey provably never drops, so
+-- the flash is drawn OVER the button.  Guessing region names got nowhere, so
+-- enumerate everything the button owns once, then watch each one for a
+-- hidden->shown transition.  This cannot miss the culprit the way a hand-written
+-- list of names can, and it names it with GetDebugName rather than a guess.
+-- Rebuilt periodically, not once: Blizzard creates some button overlays lazily
+-- -- the proc-glow alert does not exist until the first proc -- so a list
+-- captured at registration would never contain the very thing that appears.
+-- Existing probes keep their last-seen state across a rebuild, or every rebuild
+-- would re-arm them and log a false appearance.
+local function BuildProbes(frame, now)
+    if not frame then return end
+    if frame._dkfProbes and (now - (frame._dkfProbesAt or 0)) < 1 then return end
+    frame._dkfProbesAt = now
+
+    local previous = {}
+    for _, probe in ipairs(frame._dkfProbes or {}) do previous[probe.obj] = probe.wasShown end
+
+    local probes = {}
+    local function Add(obj)
+        if not (obj and obj.IsShown and obj.GetObjectType) then return end
+        local label
+        if obj.GetDebugName then
+            local ok, name = pcall(obj.GetDebugName, obj)
+            if ok and name and name ~= "" then label = name end
+        end
+        if not label then
+            local ok, kind = pcall(obj.GetObjectType, obj)
+            label = (ok and kind or "?") .. " " .. tostring(obj)
+        end
+        probes[#probes + 1] = { obj = obj, label = label, wasShown = previous[obj] }
+    end
+    -- Enumerated at most once a second rather than every frame: rebuilding a
+    -- table of regions 60 times a second would churn garbage for no gain.
+    for _, getter in ipairs({ "GetRegions", "GetChildren" }) do
+        if frame[getter] then
+            local ok, list = pcall(function() return { frame[getter](frame) } end)
+            if ok then for _, obj in ipairs(list) do Add(obj) end end
+        end
+    end
+    frame._dkfProbes = probes
+end
+
+local function SampleProbes(frame)
+    local probes = frame and frame._dkfProbes
+    if not probes then return end
+    for _, probe in ipairs(probes) do
+        local ok, shown = pcall(probe.obj.IsShown, probe.obj)
+        if ok then
+            if probe.wasShown == false and shown then
+                stats.appears[probe.label] = (stats.appears[probe.label] or 0) + 1
+            end
+            probe.wasShown = shown
+        end
+    end
+end
+
 local frameWatcher = CreateFrame("Frame")
 frameWatcher:SetScript("OnUpdate", function()
     if not (scourgeDimmed or scourgeTesting) then return end
     stats.frames = stats.frames + 1
     for _, icons in ipairs({ scourgeIcons, cdmScourgeIcons }) do
-        for _, icon in pairs(icons) do
+        for frame, icon in pairs(icons) do
+            BuildProbes(frame, GetTime())
+            SampleProbes(frame)
             if icon and icon.IsDesaturated then
                 local ok, isDesaturated = pcall(icon.IsDesaturated, icon)
                 if ok and isDesaturated == false then
