@@ -262,112 +262,8 @@ local function CreateOverlay(targetFrame, spellKey)
     return overlay
 end
 
--- Festering uses a self-contained border effect rather than a library glow.
--- This stays visible on custom Cooldown Manager buttons (including
--- EllesmereUI) where external glow libraries can be clipped or hidden.
-local function StartFesteringBorder(overlay, settings)
-    if not overlay._festeringBorder then
-        local border = {}
-        border.top = overlay:CreateTexture(nil, "OVERLAY", nil, 7)
-        border.bottom = overlay:CreateTexture(nil, "OVERLAY", nil, 7)
-        border.left = overlay:CreateTexture(nil, "OVERLAY", nil, 7)
-        border.right = overlay:CreateTexture(nil, "OVERLAY", nil, 7)
-        border.art = overlay:CreateTexture(nil, "OVERLAY", nil, 6)
-        border.sparks = {}
-        for i = 1, 8 do
-            -- WoW permits draw sublevels only from -8 through 7.
-            border.sparks[i] = overlay:CreateTexture(nil, "OVERLAY", nil, 7)
-        end
-        overlay._festeringBorder = border
-
-        overlay._festeringPulse = overlay:CreateAnimationGroup()
-        overlay._festeringPulse:SetLooping("BOUNCE")
-        local pulse = overlay._festeringPulse:CreateAnimation("Alpha")
-        pulse:SetOrder(1)
-        overlay._festeringPulseAlpha = pulse
-
-        -- The Autocast artwork has its own scale animation.  Keeping it on
-        -- the texture (rather than the target button) makes it work safely
-        -- on Blizzard and custom Cooldown Manager frames.
-        border.artPulse = border.art:CreateAnimationGroup()
-        border.artPulse:SetLooping("BOUNCE")
-        local artScale = border.artPulse:CreateAnimation("Scale")
-        artScale:SetOrder(1)
-        artScale:SetOrigin("CENTER", 0, 0)
-        border.artPulseScale = artScale
-    end
-
-    local c = settings.color or { r = 0, g = 0.9, b = 0.2 }
-    local alpha = settings.alpha or 1
-    local thickness = math.max(2, settings.thickness or 2)
-    local pad = math.max(2, math.floor(thickness * 1.5))
-    local border = overlay._festeringBorder
-    local edges = { border.top, border.bottom, border.left, border.right }
-    local style = settings.glowType or "pixel"
-
-    for _, edge in ipairs(edges) do
-        edge:SetColorTexture(c.r, c.g, c.b, alpha)
-        edge:Hide()
-    end
-    border.art:Hide()
-    border.artPulse:Stop()
-    for _, spark in ipairs(border.sparks) do spark:Hide() end
-    border.top:ClearAllPoints()
-    border.top:SetPoint("TOPLEFT", overlay, "TOPLEFT", -pad, pad)
-    border.top:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", pad, pad)
-    border.top:SetHeight(thickness)
-    border.bottom:ClearAllPoints()
-    border.bottom:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", -pad, -pad)
-    border.bottom:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", pad, -pad)
-    border.bottom:SetHeight(thickness)
-    border.left:ClearAllPoints()
-    border.left:SetPoint("TOPLEFT", overlay, "TOPLEFT", -pad, pad)
-    border.left:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", -pad, -pad)
-    border.left:SetWidth(thickness)
-    border.right:ClearAllPoints()
-    border.right:SetPoint("TOPRIGHT", overlay, "TOPRIGHT", pad, pad)
-    border.right:SetPoint("BOTTOMRIGHT", overlay, "BOTTOMRIGHT", pad, -pad)
-    border.right:SetWidth(thickness)
-
-    -- Classic DK Force effect: a clear pulsing perimeter drawn directly on
-    -- the button.  It is the proven version for Blizzard CDM and EllesmereUI;
-    -- the experimental external artwork was too subtle on several UI packs.
-    for _, edge in ipairs(edges) do edge:Show() end
-
-    local pulse = overlay._festeringPulseAlpha
-    pulse:SetDuration(math.max(0.15, settings.speed or 0.25))
-    pulse:SetFromAlpha(math.max(0.25, alpha * 0.35))
-    pulse:SetToAlpha(alpha)
-    overlay:SetAlpha(alpha)
-    overlay._festeringPulse:Stop()
-    overlay._festeringPulse:Play()
-    overlay._customFesteringActive = true
-end
-
-local function StopFesteringBorder(overlay)
-    if not overlay._customFesteringActive then return end
-    if overlay._festeringPulse then overlay._festeringPulse:Stop() end
-    if overlay._festeringBorder then
-        local border = overlay._festeringBorder
-        -- `sparks` is a table, not a texture.  Hide each layer explicitly;
-        -- iterating the whole border table tried to call :Hide() on that
-        -- table and could stop the effect after its first use.
-        for _, edge in ipairs({ border.top, border.bottom, border.left, border.right }) do
-            edge:Hide()
-        end
-        if border.art then border.art:Hide() end
-        if border.artPulse then border.artPulse:Stop() end
-        if border.sparks then
-            for _, spark in ipairs(border.sparks) do spark:Hide() end
-        end
-    end
-    overlay:SetAlpha(1)
-    overlay._customFesteringActive = false
-end
-
 function addon:CreateFesteringOverlays()
     for _, overlay in pairs(festeringOverlays) do
-        StopFesteringBorder(overlay)
         if overlay._glowActive then
             local gt = self:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
             if gt and gt.stop then pcall(gt.stop, overlay) end
@@ -427,19 +323,6 @@ function addon:RegisterCDMDnDBuffFrame(frame)
     if addon.ClearCDMDnDMissingFrame then addon:ClearCDMDnDMissingFrame(frame) end
 end
 
-function addon:ClearCDMSuddenDoomOverlays()
-    for _, overlay in pairs(cdmSuddenDoomOverlays) do
-        if overlay._glowActive then
-            local s = GetSuddenDoomOverlaySettings(overlay)
-            local gt = s and addon:GetGlowTypeByID(s.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-        end
-        overlay:Hide()
-        overlay:SetParent(nil)
-    end
-    wipe(cdmSuddenDoomOverlays)
-end
-
 -- Called by CDMHook.lua after Blizzard refreshes a specific Cooldown Manager
 -- item.  This avoids walking arbitrary UI frames (which taints in 12.1).
 function addon:RegisterCDMFesteringFrame(frame)
@@ -472,7 +355,6 @@ local festeringReasons = { expiry = false, ghoul = false }
 local function HideFesteringGlow()
     festeringGlowActive = false
     local function hideOverlay(overlay)
-        StopFesteringBorder(overlay)
         if overlay._glowActive then
             local gt = addon:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
             if gt and gt.stop then pcall(gt.stop, overlay) end
@@ -563,11 +445,9 @@ end
 function addon:RefreshFesteringGlowStyle()
     if not festeringGlowActive then return end
     for _, overlay in pairs(festeringOverlays) do
-        StopFesteringBorder(overlay)
         overlay._glowActive = false
     end
     for _, overlay in pairs(cdmFesteringOverlays) do
-        StopFesteringBorder(overlay)
         overlay._glowActive = false
     end
     ShowFesteringGlow()

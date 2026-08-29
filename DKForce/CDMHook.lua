@@ -2,10 +2,6 @@ local addonName, addon = ...
 
 local FESTERING_SCYTHE_SPELL_ID = 458128
 local FESTERING_STRIKE_SPELL_ID = 85948
-local DEATH_COIL_SPELL_ID = 47541
-local NECROTIC_COIL_SPELL_ID = 1242174
-local EPIDEMIC_SPELL_ID = 207317
-local GRAVEYARD_SPELL_ID = 383269
 local SUDDEN_DOOM_BUFF_ID = 81340
 -- CDM exposes the tracked Sudden Doom icon using its parent/passive spell ID,
 -- while the live proc aura uses 81340.
@@ -13,8 +9,6 @@ local SUDDEN_DOOM_CDM_ID = 49530
 local LESSER_GHOUL_SPELL_ID = 1254252
 local DEATH_AND_DECAY_SPELL_ID = 43265
 local DEATH_AND_DECAY_BUFF_ID = 188290
-local MARROWREND_SPELL_ID = 195182
-local DEATHS_CARESS_SPELL_ID = 195292
 local hooked = false
 
 local function GetCDMSpellID(item)

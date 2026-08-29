@@ -26,13 +26,6 @@ local function RegisterDataBrokerLauncher()
     })
 end
 
-local function IsHidingBarLoaded()
-    if C_AddOns and C_AddOns.IsAddOnLoaded then
-        return C_AddOns.IsAddOnLoaded("HidingBar")
-    end
-    return IsAddOnLoaded and IsAddOnLoaded("HidingBar")
-end
-
 function DKForce_AddonCompartmentClick()
     OpenSettings()
 end

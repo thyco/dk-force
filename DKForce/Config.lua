@@ -239,21 +239,6 @@ local function CreateColorControl(parent, x, y, labelText, settingsProvider, cha
     return swatch
 end
 
-local function CreateEditControl(parent, labelText, x, y, width, getter, setter)
-    local label = CreateText(parent, labelText, x, y, "GameFontNormal")
-    local edit = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    edit:SetSize(width, 22)
-    edit:SetPoint("LEFT", label, "RIGHT", 8, 0)
-    edit:SetAutoFocus(false)
-    edit:SetScript("OnEnterPressed", function(self)
-        setter(self:GetText())
-        self:ClearFocus()
-    end)
-    edit:SetScript("OnEditFocusLost", function(self) setter(self:GetText()) end)
-    edit.refresh = function() edit:SetText(getter() or "") end
-    return edit
-end
-
 local function CreatePresetRow(parent, x, y, settingsProvider, changed)
     local label = CreateText(parent, "Presets:", x, y, "GameFontNormal")
     local pieces = { label }
