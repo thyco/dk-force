@@ -28,6 +28,13 @@ local cdmScourgeIcons = {}
 local scourgeDimmed = false
 local scourgeTesting = false
 
+-- Counters behind /dkf dim.  The flicker has two possible sources that need
+-- opposite fixes, and they are indistinguishable by eye: either a repaint is
+-- clearing the grey faster than it is put back, or the DETECTION is blinking --
+-- the Lesser Ghoul icon going hidden/shown for a tick, toggling the whole
+-- reminder off and on.  `defends` counts the first, `flips` the second.
+local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0 }
+
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
 end
@@ -79,9 +86,15 @@ local function HookIcon(icon)
         -- Only defend icons still tracked: a button that dropped out of the
         -- last scan keeps its hook, and must not be forced grey by it.
         if not self._dkfScourgeTracked then return end
+        stats.defends = stats.defends + 1
         SetIconDesaturated(self, true)
     end)
-    if not ok then icon._dkfDesaturationHooked = nil end
+    if ok then
+        stats.hooked = stats.hooked + 1
+    else
+        stats.hookFailed = stats.hookFailed + 1
+        icon._dkfDesaturationHooked = nil
+    end
 end
 
 local function TrackIcon(icon)
@@ -119,9 +132,12 @@ function addon:SetScourgeDimmed(value)
         return
     end
     if value then
+        if not scourgeDimmed then stats.flips = stats.flips + 1 end
         scourgeDimmed = true
         ApplyAll(true)
     elseif scourgeDimmed then
+        stats.flips = stats.flips + 1
+        stats.releases = stats.releases + 1
         scourgeDimmed = false
         ApplyAll(false)
     end
@@ -193,4 +209,38 @@ function addon:TestScourgeDim()
         print("|cffcc0000DK Force:|r Scourge Strike desaturated on " .. count .. " icon(s).")
     end
     return count
+end
+
+-- /dkf dim.  Read it after a fight that flickered.
+--
+--   defends high, flips low   -> a repaint keeps clearing the grey; the hook is
+--                                catching it, so the remaining flash is the gap
+--                                before the hook runs.
+--   defends 0, flips high     -> nothing is repainting the icon.  The DETECTION
+--                                is blinking: the Lesser Ghoul icon drops for a
+--                                tick and takes the whole reminder with it.
+--                                That wants a grace period, exactly like the one
+--                                the Stand In Death and Decay reminder uses to
+--                                filter the Cleaving Strikes blink.
+--   defends 0, flips 0        -> neither.  The flicker is coming from something
+--                                outside this module.
+--   hooked 0                  -> the hook never installed; nothing here can hold.
+function addon:PrintScourgeDimDiagnostic()
+    local bars, cdm = 0, 0
+    for _ in pairs(scourgeIcons)    do bars = bars + 1 end
+    for _ in pairs(cdmScourgeIcons) do cdm  = cdm  + 1 end
+
+    print("|cffcc0000DK Force:|r Scourge Strike desaturation")
+    print(("  enabled: %s   dimmed now: %s   testing: %s")
+        :format(tostring(addon:IsScourgeDimEnabled()), tostring(scourgeDimmed), tostring(scourgeTesting)))
+    print(("  icons tracked: %d on bars, %d in Cooldown Manager"):format(bars, cdm))
+    print(("  hooks installed: %d   failed: %d"):format(stats.hooked, stats.hookFailed))
+    print(("  defends (repaint cleared the grey): %d"):format(stats.defends))
+    print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
+    print("  Use /dkf dimreset to zero the counters before a test fight.")
+end
+
+function addon:ResetScourgeDimDiagnostic()
+    stats.defends, stats.flips, stats.releases = 0, 0, 0
+    print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
