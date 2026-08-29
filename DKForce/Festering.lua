@@ -250,6 +250,44 @@ function addon:EvaluateGhoulState(settings, frameShown, inCombat)
            (settings.lesserGhoulDim and missing) or false
 end
 
+-- Lesser Ghoul return grace
+--
+-- The tracked icon blinks: it drops hidden and comes back within a tick or two,
+-- and each blink switched the whole reminder off and on again.  On the glow
+-- that is a brief flash; on the desaturation it is an icon snapping back to
+-- full colour and away again, which is what "flickers to the saturated version"
+-- turned out to mean.
+--
+-- Hold a "missing" verdict briefly when the icon returns, so a blink is
+-- filtered but a genuine refresh still clears within half a second.  This is
+-- the same shape as the Stand In Death and Decay grace period, which exists to
+-- filter the Cleaving Strikes blink for exactly the same reason.
+--
+-- The grace applies ONLY on the way back.  A ghoul that really drops still
+-- triggers instantly, because a late reminder is a useless one.
+local GHOUL_RETURN_GRACE = 0.40
+local ghoulBackSince = nil
+local ghoulWasMissing = false
+function addon:StableGhoulShown(rawShown, now)
+    if rawShown == nil then
+        ghoulBackSince, ghoulWasMissing = nil, false
+        return nil
+    end
+    if not rawShown then
+        ghoulBackSince, ghoulWasMissing = nil, true
+        return false
+    end
+    -- Present.  Only worth holding if we were reporting it missing; without
+    -- this the reminder would flash on for the grace period at login, when the
+    -- ghoul has been up all along.
+    if ghoulWasMissing then
+        ghoulBackSince = ghoulBackSince or now
+        if (now - ghoulBackSince) < GHOUL_RETURN_GRACE then return false end
+    end
+    ghoulBackSince, ghoulWasMissing = nil, false
+    return true
+end
+
 local ghoulWatcher = CreateFrame("Frame")
 local ghoulElapsed = 0
 ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
@@ -259,7 +297,8 @@ ghoulWatcher:SetScript("OnUpdate", function(_, elapsed)
 
     local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
     -- nil when no icon is registered, false when one is registered and hidden.
-    local frameShown = lesserGhoulFrame and lesserGhoulFrame:IsShown()
+    local rawShown = lesserGhoulFrame and lesserGhoulFrame:IsShown()
+    local frameShown = addon:StableGhoulShown(rawShown, GetTime())
     local glow, dim = addon:EvaluateGhoulState(settings, frameShown, InCombatLockdown())
     SetFesteringReason("ghoul", glow)
     addon:SetScourgeDimmed(dim)

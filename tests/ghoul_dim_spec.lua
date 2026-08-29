@@ -142,6 +142,66 @@ glow, dim = addon:EvaluateGhoulState(dimOnly, false, true)
 check("glow return is a boolean", type(glow), "boolean")
 check("desaturation return is a boolean", type(dim), "boolean")
 
+-- ---------------------------------------------------------------
+-- The return grace.  Sliced separately: it carries state, so it lives in its
+-- own marked block rather than inside the pure gate above.
+-- ---------------------------------------------------------------
+local GRACE_HEADER = "-- Lesser Ghoul return grace"
+
+local function sliceFrom(header)
+    local f = assert(io.open(SOURCE, "r"), "cannot open " .. SOURCE)
+    local lines = {}
+    for line in f:lines() do lines[#lines + 1] = line end
+    f:close()
+    local first
+    for i, line in ipairs(lines) do
+        if line == header then first = i break end
+    end
+    if not first then return nil, ("%s not found in %s"):format(header, SOURCE) end
+    local last
+    for i = first + 1, #lines do
+        if lines[i] == "end" then last = i break end
+    end
+    if not last then return nil, "end marker not found after " .. header end
+    return table.concat(lines, "\n", first, last)
+end
+
+local graceSource, graceErr = sliceFrom(GRACE_HEADER)
+if not graceSource then
+    print("Lesser Ghoul reminder gating             FAIL")
+    print("  " .. graceErr)
+    os.exit(1)
+end
+assert(load(graceSource, "ghoul-grace"))()
+
+-- A ghoul that genuinely drops must register instantly: a late reminder is a
+-- useless one, so the grace deliberately runs one way only.
+check("drop is reported immediately", addon:StableGhoulShown(false, 100), false)
+
+-- The blink this exists for: gone, back a tenth of a second later.  The verdict
+-- has to hold, or the whole reminder switches off and the icon snaps back to
+-- full colour -- which is the flicker itself.
+check("blink at 0.1s: still missing", addon:StableGhoulShown(true, 100.1), false)
+check("blink at 0.3s: still missing", addon:StableGhoulShown(true, 100.3), false)
+
+-- A real return still clears, and promptly.
+check("genuine return at 0.5s: present", addon:StableGhoulShown(true, 100.5), true)
+
+-- Steady presence never fabricates a missing verdict.  Without the
+-- was-missing check the grace would fire at login, flashing the reminder on
+-- while the ghoul had been up the whole time.
+check("steady presence stays present", addon:StableGhoulShown(true, 101), true)
+check("steady presence, later still", addon:StableGhoulShown(true, 200), true)
+
+-- Dropping again after a clear restarts the cycle rather than staying latched.
+check("drops again: missing at once", addon:StableGhoulShown(false, 201), false)
+check("returns, inside grace", addon:StableGhoulShown(true, 201.2), false)
+check("returns, past grace", addon:StableGhoulShown(true, 201.6), true)
+
+-- No icon registered clears the latch, so a reload cannot leave it stuck.
+check("no icon registered", addon:StableGhoulShown(nil, 202), nil)
+check("after no icon, a drop still reports", addon:StableGhoulShown(false, 202.1), false)
+
 if failures == 0 then
     print(string.format("Lesser Ghoul reminder gating             OK (%d checks)", checks))
     os.exit(0)
