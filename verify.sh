@@ -58,28 +58,26 @@ stalecmd=$(grep -rn "/dka\b\|/dkassist\b" "$ADDON" --include='*.lua' 2>/dev/null
 if [ -n "$stalecmd" ]; then say "stale slash command" "FAIL"; echo "$stalecmd"; FAIL=1
 else say "stale slash command" "OK"; fi
 
-# 7. The Stand In Death and Decay subsystem must stay byte-identical.
-#    This is the feature the whole project exists to preserve.  The window is
-#    found by logical bounds -- the banner rule through the `end)` that closes
-#    dndMissingWatcher -- so it stays exact as surrounding code moves.
-#    Task 9 made two deliberate, named edits (dropping BloodDnDGlowActiveOn and
-#    the `shared` yield parameter) and this hash was updated with them, after the
-#    diff was inspected and confirmed to contain only those two edits.
-DND_EXPECTED_MD5=1d26116eaa80b74e05f7c4a1cae69a60
-if command -v md5 >/dev/null 2>&1; then _md5() { md5 -q; }
-else _md5() { md5sum | cut -d" " -f1; }; fi
-dndstart=$(grep -n "^-- Death and Decay Buff Reminder (Blood)$" "$ADDON/Core.lua" 2>/dev/null | cut -d: -f1)
-dndend=$(awk -v s="$dndstart" 'NR>s && /^end\)$/ {print NR; exit}' "$ADDON/Core.lua" 2>/dev/null)
-if [ -z "$dndstart" ] || [ -z "$dndend" ]; then
-  say "DnD subsystem bounds" "NOT FOUND"; FAIL=1
+# 7. The Stand In Death and Decay reminder must still BEHAVE correctly.
+#    This is the feature the whole project exists to preserve.  It used to be an
+#    md5 over the subsystem, which only proved the bytes had not changed: every
+#    intentional edit failed it and was resolved by re-blessing the hash, so it
+#    was a speed bump rather than a defence, and it could not survive the code
+#    moving to another file.  The spec below slices the real subsystem out and
+#    runs it under desktop Lua with the WoW API stubbed, asserting the glow
+#    decisions themselves -- the grace period that filters the Cleaving Strikes
+#    blink, the combat gate, the spec and enabled gates.  Each of those
+#    assertions was proven to fail against a deliberately broken copy before
+#    this check was trusted.
+if [ ! -f tests/dnd_missing_spec.lua ]; then
+  say "DnD behaviour spec" "MISSING"; FAIL=1
+elif ! command -v lua >/dev/null 2>&1; then
+  say "DnD behaviour spec" "SKIP (no lua)"
 else
-  dndmd5=$(sed -n "$((dndstart-1)),${dndend}p" "$ADDON/Core.lua" | _md5)
-  if [ "$dndmd5" = "$DND_EXPECTED_MD5" ]; then
-    say "DnD subsystem byte-identical" "OK"
+  if out=$(lua tests/dnd_missing_spec.lua 2>&1); then
+    say "Stand In Death and Decay behaviour" "OK"
   else
-    say "DnD subsystem byte-identical" "FAIL (got $dndmd5)"
-    say "  -> Stand In Death and Decay was modified." "This is the protected feature."
-    FAIL=1
+    say "Stand In Death and Decay behaviour" "FAIL"; echo "$out"; FAIL=1
   fi
 fi
 
