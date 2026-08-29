@@ -110,6 +110,23 @@ addon.GLOW_TYPES = {
         end,
     },
     {
+        id = "buttonnative",
+        name = "Native Button Glow",
+        description = "Blizzard's proc glow with its own colour",
+        -- Passing no colour is the whole point.  ButtonGlow_Start desaturates
+        -- its textures and tints them whenever a colour is supplied, which is
+        -- what every other style here does; with nil it leaves the Blizzard
+        -- artwork untouched, so this is the only way to get the authentic gold
+        -- rather than a flat wash of it.  Nothing else is configurable: the
+        -- library normalises alpha back to native on this path too.
+        start = function(frame, opts)
+            if LCG and LCG.ButtonGlow_Start then LCG.ButtonGlow_Start(frame, nil) end
+        end,
+        stop = function(frame)
+            if LCG and LCG.ButtonGlow_Stop then LCG.ButtonGlow_Stop(frame) end
+        end,
+    },
+    {
         id = "proc",
         name = "Proc Border",
         description = "Animated glowing border",

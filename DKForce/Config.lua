@@ -217,6 +217,10 @@ local function CreateColorControl(parent, x, y, labelText, colorProvider, change
             end,
         })
     end)
+    -- The label and hint are separate regions parented to the card, so hiding
+    -- the swatch alone would strand them.  Styles that take no colour hide the
+    -- whole group through this.
+    swatch.pieces = { label, swatch, hint }
     return swatch
 end
 
@@ -260,7 +264,15 @@ local function CreatePresetRow(parent, x, y, settingsProvider, changed)
         end)
         buttons[index] = button
     end
+    -- Returned as one hideable group, label included, for the same reason as
+    -- CreateColorControl.pieces.  Callers that only place the row ignore this.
+    buttons[#buttons + 1] = label
     return buttons
+end
+
+local function SetPiecesShown(pieces, shown)
+    if not pieces then return end
+    for _, region in ipairs(pieces) do region:SetShown(shown) end
 end
 
 function addon:CreateConfigPanel(standalone)
@@ -469,9 +481,19 @@ function addon:CreateConfigPanel(standalone)
                 function() return settings().alpha end, function(v) settings().alpha = v; changed() end),
         }
         page.appearanceControls = controls
+        -- Shown in place of the sliders for styles that expose nothing, so the
+        -- card explains itself instead of just looking empty.  The card is
+        -- anchored to fixed page corners, so hiding it would leave the same
+        -- hole anyway.
+        page.appearanceNote = CreateText(card,
+            "Blizzard's own proc glow, drawn exactly as the game draws it.  "
+            .. "Colour, speed and opacity are all fixed, so there is nothing to configure.",
+            14, baseY, "GameFontHighlightSmall", appearanceWidth, { 0.64, 0.64, 0.64 })
+        page.appearanceNote:Hide()
         page.refreshAppearance = function()
             local glowType = settings().glowType or "pixel"
-            local visible = glowType == "pixel" and { "speed", "lines", "thickness", "alpha" }
+            local visible = glowType == "buttonnative" and {}
+                or glowType == "pixel" and { "speed", "lines", "thickness", "alpha" }
                 or (glowType == "autocast" or glowType == "button") and { "speed", "alpha" }
                 or { "alpha" }
             local y = baseY
@@ -483,6 +505,12 @@ function addon:CreateConfigPanel(standalone)
                 control:Show(); control.refresh()
                 y = y - 50
             end
+            -- The colour controls live on a different card on every page, so
+            -- they are reached through the page rather than captured here.
+            local native = glowType == "buttonnative"
+            page.appearanceNote:SetShown(native)
+            SetPiecesShown(page.colorSwatch and page.colorSwatch.pieces, not native)
+            SetPiecesShown(page.presetRow, not native)
             local glowName = addon:GetGlowTypeByID(glowType).name
             card.title:SetText(glowName .. " appearance")
         end
@@ -544,7 +572,7 @@ function addon:CreateConfigPanel(standalone)
         page.glowDropdown:SetPoint("LEFT", glowStyleLabel, "RIGHT", -8, -2)
         page.colorSwatch = CreateColorControl(page.settingsCard, 14, -149 + compactOffset, "Glow Color:",
             function() return settings().color end, changed)
-        CreatePresetRow(page.settingsCard, 14, -181 + compactOffset, settings, function()
+        page.presetRow = CreatePresetRow(page.settingsCard, 14, -181 + compactOffset, settings, function()
             page.colorSwatch.refresh(); changed()
         end)
 
@@ -614,7 +642,7 @@ function addon:CreateConfigPanel(standalone)
             function(v) settings().glowType = v; page.refreshAppearance(); changed() end)
         page.glowDropdown:ClearAllPoints(); page.glowDropdown:SetPoint("LEFT", styleLabel, "RIGHT", -8, -2)
         page.colorSwatch = CreateColorControl(page.glowCard, 14, -149, "Glow Color:", function() return settings().color end, changed)
-        CreatePresetRow(page.glowCard, 14, -181, settings, function() page.colorSwatch.refresh(); changed() end)
+        page.presetRow = CreatePresetRow(page.glowCard, 14, -181, settings, function() page.colorSwatch.refresh(); changed() end)
         BuildAppearance(page, page.appearanceCard, "suddendoom")
 
         page.previewIcon = CreatePreview(page.previewCard, 81340)
@@ -683,7 +711,7 @@ function addon:CreateConfigPanel(standalone)
         page.glowDropdown:SetPoint("LEFT", glowStyleLabel, "RIGHT", -8, -2)
         page.colorSwatch = CreateColorControl(page.appearanceCard, 14, -76, "Glow Color:",
             function() return settings().color end, changed)
-        CreatePresetRow(page.appearanceCard, 14, -108, settings, function()
+        page.presetRow = CreatePresetRow(page.appearanceCard, 14, -108, settings, function()
             page.colorSwatch.refresh(); changed()
         end)
         BuildAppearance(page, page.appearanceCard, "blightfall", -140)
