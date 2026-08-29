@@ -39,16 +39,8 @@ local function LesserGhoulEnabled()
     return (settings and settings.enabled and settings.lesserGhoulGlow) or false
 end
 
-local function BloodDnDEnabled()
-    return DKForceDB and DKForceDB.bloodDnd and DKForceDB.bloodDnd.enabled
-end
-
-local function BloodDnDMissingEnabled()
+local function DnDMissingEnabled()
     return DKForceDB and DKForceDB.bloodDndMissing and DKForceDB.bloodDndMissing.enabled
-end
-
-local function AnyBloodDnDEnabled()
-    return BloodDnDEnabled() or BloodDnDMissingEnabled()
 end
 
 -- Death and Decay appears twice in the CDM: the ability icon is a glow target,
@@ -73,7 +65,7 @@ end
 
 local function RegisterItem(item)
     if not DKForceDB or (not DKForceDB.trackCDMFestering
-        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not AnyBloodDnDEnabled()) then return end
+        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not DnDMissingEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
@@ -85,7 +77,7 @@ local function RegisterItem(item)
             return "deathCoil"
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif AnyBloodDnDEnabled()
+        elseif DnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
                 or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
             -- A reported aura ID settles it outright; otherwise fall back to
@@ -103,10 +95,9 @@ local function RegisterItem(item)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
     elseif kind == "bloodDndAbility" then
-        addon:RegisterCDMBloodDnDAbilityFrame(item)
         addon:RegisterCDMDnDMissingFrame(item)
     elseif kind == "bloodDndBuff" then
-        addon:RegisterCDMBloodDnDBuffFrame(item)
+        addon:RegisterCDMDnDBuffFrame(item)
     end
 end
 
@@ -130,7 +121,7 @@ local function RegisterEllesmereItem(item, euiCDM)
             return "deathCoil"
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif AnyBloodDnDEnabled()
+        elseif DnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
             -- A reported aura ID settles it outright; otherwise fall back to
             -- viewer ownership, which also holds while the aura is down.
@@ -146,10 +137,9 @@ local function RegisterEllesmereItem(item, euiCDM)
     elseif kind == "lesserGhoul" then
         addon:RegisterCDMLesserGhoulFrame(item)
     elseif kind == "bloodDndAbility" then
-        addon:RegisterCDMBloodDnDAbilityFrame(item)
         addon:RegisterCDMDnDMissingFrame(item)
     elseif kind == "bloodDndBuff" then
-        addon:RegisterCDMBloodDnDBuffFrame(item)
+        addon:RegisterCDMDnDBuffFrame(item)
     end
 end
 

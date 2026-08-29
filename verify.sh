@@ -59,24 +59,56 @@ if [ -n "$stalecmd" ]; then say "stale slash command" "FAIL"; echo "$stalecmd"; 
 else say "stale slash command" "OK"; fi
 
 # 7. The Stand In Death and Decay subsystem must stay byte-identical.
-#    This is the feature the whole project exists to preserve.  Tasks 1-8 must
-#    not alter one byte of it; Task 9 makes two deliberate, named edits and
-#    updates DND_EXPECTED_MD5 below in the same change.
-DND_EXPECTED_MD5=da89d08b0c2294db1a61db1f473b25f4
+#    This is the feature the whole project exists to preserve.  The window is
+#    found by logical bounds -- the banner rule through the `end)` that closes
+#    dndMissingWatcher -- so it stays exact as surrounding code moves.
+#    Task 9 made two deliberate, named edits (dropping BloodDnDGlowActiveOn and
+#    the `shared` yield parameter) and this hash was updated with them, after the
+#    diff was inspected and confirmed to contain only those two edits.
+DND_EXPECTED_MD5=7c087830ebf974c5b67242ea88454605
+if command -v md5 >/dev/null 2>&1; then _md5() { md5 -q; }
+else _md5() { md5sum | cut -d" " -f1; }; fi
 dndstart=$(grep -n "^-- Death and Decay Buff Reminder (Blood)$" "$ADDON/Core.lua" 2>/dev/null | cut -d: -f1)
-if [ -z "$dndstart" ]; then
-  say "DnD subsystem banner" "MISSING"; FAIL=1
+dndend=$(awk -v s="$dndstart" 'NR>s && /^end\)$/ {print NR; exit}' "$ADDON/Core.lua" 2>/dev/null)
+if [ -z "$dndstart" ] || [ -z "$dndend" ]; then
+  say "DnD subsystem bounds" "NOT FOUND"; FAIL=1
 else
-  dndfrom=$((dndstart-1)); dndto=$((dndfrom+175))
-  if command -v md5 >/dev/null 2>&1; then _md5() { md5 -q; }
-  else _md5() { md5sum | cut -d" " -f1; }; fi
-  dndmd5=$(sed -n "${dndfrom},${dndto}p" "$ADDON/Core.lua" | _md5)
+  dndmd5=$(sed -n "$((dndstart-1)),${dndend}p" "$ADDON/Core.lua" | _md5)
   if [ "$dndmd5" = "$DND_EXPECTED_MD5" ]; then
     say "DnD subsystem byte-identical" "OK"
   else
     say "DnD subsystem byte-identical" "FAIL (got $dndmd5)"
     say "  -> Stand In Death and Decay was modified." "This is the protected feature."
     FAIL=1
+  fi
+fi
+
+# 8. No leaked globals.  A local that was deleted but still referenced compiles
+#    fine and reads as a global at runtime -- invisible to grep and to luac -p.
+#    Dumping each chunk's _ENV accesses catches exactly that.  known-globals.txt
+#    is the allowlist, generated from reviewed code; a NEW name here is either a
+#    genuine new API call (add it deliberately) or a leak (fix the code).
+if ! command -v luac >/dev/null 2>&1; then
+  say "leaked globals" "SKIP (no luac)"
+elif [ "$(luac -p -l "$ADDON/Core.lua" 2>/dev/null | grep -c '_ENV')" -eq 0 ]; then
+  # NB: grep -c, not grep -q.  This script runs under `set -o pipefail`, and
+  # grep -q exits on its first match, SIGPIPEing luac and failing the pipeline
+  # even though the probe succeeded -- which silently disabled this check.
+  say "leaked globals" "SKIP (luac too old to list _ENV)"
+elif [ ! -f known-globals.txt ]; then
+  say "leaked globals" "SKIP (no known-globals.txt)"
+else
+  leaked=""
+  for f in "$ADDON"/*.lua; do
+    while IFS= read -r g; do
+      [ -z "$g" ] && continue
+      grep -qxF "$g" known-globals.txt || leaked="$leaked\n  $(basename "$f"): $g"
+    done < <(luac -p -l "$f" 2>/dev/null | grep -oE '_ENV "[A-Za-z_][A-Za-z0-9_]*"' | sed 's/_ENV "//; s/"//' | sort -u)
+  done
+  if [ -n "$leaked" ]; then
+    say "leaked globals" "FAIL"; printf "%b\n" "$leaked"; FAIL=1
+  else
+    say "no leaked globals" "OK"
   fi
 fi
 

@@ -42,6 +42,19 @@ addon.SPELLS = {
         name = "Soul Reaper",
         key  = nil,
     },
+    BLIGHTFALL = {
+        id   = 1271967,
+        name = "Blightfall",
+        icon = 5976940,
+        key  = nil,
+    },
+    -- Only tracked to open the Soul Reaper -> Blightfall chain below.  The
+    -- Putrefy window that used to need it is gone.
+    DARK_TRANSFORMATION = {
+        id   = 1233448,
+        name = "Dark Transformation",
+        key  = nil,
+    },
     DEATH_COIL = { id = 47541, name = "Death Coil", key = "deathCoil" },
     NECROTIC_COIL = { id = 1242174, name = "Necrotic Coil", key = "deathCoil" },
     EPIDEMIC = { id = 207317, name = "Epidemic", key = "epidemic" },
@@ -156,21 +169,7 @@ addon.DEFAULT_DB = {
     -- tracked in the Cooldown Manager.  It must not share colors with either
     -- Death Coil or Epidemic action-bar glows.
     suddenDoomGlow = CopyTable(DEFAULT_GLOW_SETTINGS),
-    bloodDnd = {
-        enabled   = false,
-        glowType  = "pixel",
-        color     = {r = 0.85, g = 0.10, b = 0.10},
-        alpha     = 1.0,
-        speed     = 0.25,
-        lines     = 8,
-        thickness = 2,
-        particles = 4,
-        scale     = 1.0,
-        border    = false,
-    },
-    -- Companion to bloodDnd: glow while you are standing outside your own
-    -- Death and Decay.  Separate settings so both reminders can run with
-    -- their own style, or either one alone.
+    -- Glow while you are standing outside your own Death and Decay.
     bloodDndMissing = {
         enabled   = false,
         glowType  = "pixel",
@@ -183,6 +182,32 @@ addon.DEFAULT_DB = {
         scale     = 1.0,
         border    = false,
     },
+    -- Unholy chain prompt.  The movable icon is the only display DK Force
+    -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
+    -- so `enabled` is the single switch for the whole feature.
+    blightfallChain = {
+        enabled         = false,
+        soundEnabled    = true,
+        soundVolume     = 100,
+        soulReaperDelay = 6.0,
+        blightfallDelay = 7.5,
+        iconSize        = 64,
+        -- Locked by default: the prompt sits at screen centre and is visible for
+        -- most of a chain cycle, so an unlocked (mouse-enabled) icon would eat
+        -- clicks in the middle of the screen during combat.  A Test only
+        -- re-enables the mouse; dragging the icon still requires unlocking it.
+        iconLocked      = true,
+        -- iconPosition is deliberately absent: a nil value in a table literal
+        -- sets no key, so the DEFAULT_DB merge loop would never iterate it.
+        -- The drag handler creates it on first use.
+        fontSize        = 18,
+        glowType        = "button",
+        color           = { r = 0.72, g = 0.40, b = 1.00 },
+        speed           = 0.25,
+        lines           = 8,
+        thickness       = 2,
+        alpha           = 1.00,
+    },
 }
 
 function addon:GetGlowTypeByID(id)
@@ -193,13 +218,7 @@ local festeringOverlays    = {}
 local cdmFesteringOverlays = {}
 local suddenDoomOverlays   = {}
 local cdmSuddenDoomOverlays = {}
-local cdmBloodDnDOverlays = {}
 local bloodDnDBuffFrame = nil
-local bloodDnDTestActive = false
-local bloodDnDReady = true
-local bloodDnDReadyTimer = nil
-local BLOOD_DND_COOLDOWN = 15
-local CRIMSON_SCOURGE_AURA_ID = 81141
 local suddenDoomActive = false
 
 function addon:GetActiveSpecID()
@@ -217,9 +236,28 @@ function addon:IsUnholySpec()
     return self:GetActiveSpecID() == 252
 end
 
+-- Upstream gated the Blightfall chain on the San'layn hero specialization.
+-- That is only a proxy: a San'layn build that has not taken the talent would
+-- still be told to press a spell it does not have.  Gate on the talent.
+function addon:IsBlightfallTalented()
+    return IsPlayerSpell and IsPlayerSpell(addon.SPELLS.BLIGHTFALL.id) or false
+end
+
 local function GetSuddenDoomOverlaySettings(overlay)
     if DKForceDB.trackCDMSuddenDoom then return DKForceDB.suddenDoomGlow end
     return DKForceDB.spells[overlay._spellKey]
+end
+
+-- The "Enable Sudden Doom glow" checkbox on the Sudden Doom page is the master
+-- switch for the whole feature.  In Cooldown Manager mode the overlay settings
+-- ARE `suddenDoomGlow`, so the switch was already honoured there.  In Action Bar
+-- mode -- the default -- the overlays carry the Death Coil / Epidemic tables,
+-- whose `enabled` fields default to true and whose checkboxes are hidden, so the
+-- switch did nothing.  Consult it in both modes; the per-spell tables keep
+-- supplying the appearance (colour, style, speed, opacity) as before.
+local function SuddenDoomEnabled()
+    local s = DKForceDB.suddenDoomGlow
+    return (s and s.enabled) and true or false
 end
 
 local function CreateOverlay(targetFrame, spellKey)
@@ -405,100 +443,12 @@ function addon:RegisterCDMSuddenDoomFrame(frame, spellKey)
     if suddenDoomActive then addon:ShowSuddenDoomGlows() end
 end
 
-local function StopBloodDnDOverlay(overlay)
-    if overlay._glowActive then
-        local settings = DKForceDB and DKForceDB.bloodDnd
-        local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
-        if glowType and glowType.stop then pcall(glowType.stop, overlay) end
-        overlay._glowActive = false
-    end
-    overlay:Hide()
-end
-
-function addon:StopBloodDnDReminder()
-    bloodDnDTestActive = false
-    for _, overlay in pairs(cdmBloodDnDOverlays) do
-        StopBloodDnDOverlay(overlay)
-    end
-end
-
-function addon:RegisterCDMBloodDnDAbilityFrame(frame)
-    if not (DKForceDB and DKForceDB.bloodDnd and DKForceDB.bloodDnd.enabled) then return end
-    if cdmBloodDnDOverlays[frame] then return end
-    cdmBloodDnDOverlays[frame] = CreateOverlay(frame, "bloodDnd")
-end
-
-function addon:RegisterCDMBloodDnDBuffFrame(frame)
+function addon:RegisterCDMDnDBuffFrame(frame)
     bloodDnDBuffFrame = frame
-    -- While the aura is down this row reports the ability spell ID, so an
-    -- earlier scan may have registered it as a glow target.  The detection
-    -- source must never be decorated: it is hidden exactly when the
-    -- buff-missing reminder needs to be visible.
-    local overlay = cdmBloodDnDOverlays[frame]
-    if overlay then
-        StopBloodDnDOverlay(overlay)
-        overlay:SetParent(nil)
-        cdmBloodDnDOverlays[frame] = nil
-    end
+    -- The detection source must never be decorated: it is hidden exactly when
+    -- the buff-missing reminder needs to be visible.
     if addon.ClearCDMDnDMissingFrame then addon:ClearCDMDnDMissingFrame(frame) end
 end
-
-function addon:RefreshBloodDnDReminder()
-    local settings = DKForceDB and DKForceDB.bloodDnd
-    local crimsonScourgeActive = false
-    -- Crimson Scourge immediately resets Death and Decay. Only test whether
-    -- Blizzard returned the aura; its other fields may be secret in 12.1.
-    if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, CRIMSON_SCOURGE_AURA_ID)
-        crimsonScourgeActive = ok and aura ~= nil
-    end
-    if crimsonScourgeActive then bloodDnDReady = true end
-    local active = bloodDnDTestActive or (settings and settings.enabled and addon:IsBloodSpec()
-        and InCombatLockdown() and bloodDnDReady)
-    for _, overlay in pairs(cdmBloodDnDOverlays) do
-        local target = overlay._targetFrame
-        if active and target and target:IsVisible() then
-            overlay:Show()
-            if not overlay._glowActive then
-                local glowType = addon:GetGlowTypeByID(settings.glowType)
-                if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
-                    overlay._glowActive = true
-                end
-            end
-        else
-            StopBloodDnDOverlay(overlay)
-        end
-    end
-end
-
-function addon:TestBloodDnDReminder()
-    local settings = DKForceDB and DKForceDB.bloodDnd
-    bloodDnDTestActive = true
-    local shown = 0
-    for _, overlay in pairs(cdmBloodDnDOverlays) do
-        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
-            overlay:Show()
-            local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
-            if glowType and glowType.start then pcall(glowType.start, overlay, settings) end
-            overlay._glowActive = true
-            shown = shown + 1
-        end
-    end
-    if shown == 0 then
-        bloodDnDTestActive = false
-        print("|cffcc0000DK Force:|r Add Death and Decay and its buff to the Cooldown Manager, then use Rescan Bars.")
-    end
-    return shown
-end
-
-local bloodDnDWatcher = CreateFrame("Frame")
-local bloodDnDElapsed = 0
-bloodDnDWatcher:SetScript("OnUpdate", function(_, elapsed)
-    bloodDnDElapsed = bloodDnDElapsed + elapsed
-    if bloodDnDElapsed < 0.10 then return end
-    bloodDnDElapsed = 0
-    addon:RefreshBloodDnDReminder()
-end)
 
 function addon:ClearCDMSuddenDoomOverlays()
     for _, overlay in pairs(cdmSuddenDoomOverlays) do
@@ -520,156 +470,6 @@ function addon:RegisterCDMFesteringFrame(frame)
     local overlay = CreateOverlay(frame, "festeringScythe")
     cdmFesteringOverlays[frame] = overlay
     addon:RefreshFesteringGlows()
-end
-
--- 12.1 can contain thousands of UI frames. Keep discovery bounded so a scan
--- cannot monopolize a rendered frame after login, zoning, or a spec change.
-local cdmScanRunning = false
-local cdmDisabledFor121 = false
-
-function addon:CreateCDMOverlays()
-    for _, overlay in pairs(cdmFesteringOverlays) do
-        if overlay._glowActive then
-            local gt = self:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-        end
-        overlay:Hide()
-        overlay:SetParent(nil)
-    end
-    wipe(cdmFesteringOverlays)
-
-    if not DKForceDB.trackCDMFestering then return end
-
-    local scStr  = "3997563"
-    local fsStr  = "879926"
-
-    local frame = EnumerateFrames()
-    while frame do
-        if frame.Icon and type(frame.Icon) == "table" and frame.Icon.GetTexture then
-            local ok, matched = pcall(function()
-                local tex = frame.Icon:GetTexture()
-                if tex then
-                    local texStr = tostring(tex)
-                    if DKForceDB.trackCDMFestering and (texStr == scStr or texStr == fsStr) then
-                        return "festering"
-                    end
-                end
-                return nil
-            end)
-            if ok and matched == "festering" then
-                local overlay = CreateFrame("Frame", nil, frame)
-                overlay:SetFrameStrata("HIGH")
-                overlay:SetAllPoints(frame)
-                overlay:SetFrameLevel(frame:GetFrameLevel() + 10)
-                overlay._targetFrame = frame
-                overlay._glowActive  = false
-                overlay:Hide()
-                cdmFesteringOverlays[frame] = overlay
-            end
-        end
-        frame = EnumerateFrames(frame)
-    end
-end
-
--- Additive CDM overlay creation — only creates overlays for frames not already tracked
--- Called by ScanCDMSafe() to avoid disrupting active glows
-function addon:CreateCDMOverlaysAdditive()
-    if not DKForceDB.trackCDMFestering then return 0 end
-
-    local scStr  = "3997563"
-    local fsStr  = "879926"
-    local added  = 0
-
-    local frame = EnumerateFrames()
-    while frame do
-        if frame.Icon and type(frame.Icon) == "table" and frame.Icon.GetTexture then
-            -- Skip frames already tracked
-            if not cdmFesteringOverlays[frame] then
-                local ok, matched = pcall(function()
-                    local tex = frame.Icon:GetTexture()
-                    if tex then
-                        local texStr = tostring(tex)
-                        if DKForceDB.trackCDMFestering and (texStr == scStr or texStr == fsStr) then
-                            return "festering"
-                        end
-                    end
-                    return nil
-                end)
-                if ok and matched == "festering" then
-                    local overlay = CreateFrame("Frame", nil, frame)
-                    overlay:SetFrameStrata("HIGH")
-                    overlay:SetAllPoints(frame)
-                    overlay:SetFrameLevel(frame:GetFrameLevel() + 10)
-                    overlay._targetFrame = frame
-                    overlay._glowActive  = false
-                    overlay:Hide()
-                    cdmFesteringOverlays[frame] = overlay
-                    added = added + 1
-                end
-            end
-        end
-        frame = EnumerateFrames(frame)
-    end
-
-    return added
-end
-
--- Override the legacy synchronous frame walk above.  The scan is deliberately
--- incremental: 40 frames per game tick keeps this compatible with the larger
--- 12.1 UI frame tree without causing a client-wide hitch.
-local function StartSafeCDMScan(reset)
-    -- CDM items are registered by CDMHook.lua as Blizzard refreshes them.
-    -- Do not enumerate UI frames or read protected texture identifiers.
-    -- Keep the legacy code below syntactically isolated while the supported
-    -- CDM hook path in CDMHook.lua performs registration.
-    if true then return 0 end
-
-    -- Legacy implementation retained below for future API support.
-    if not DKForceDB.trackCDMFestering then return 0 end
-    if cdmScanRunning then return 0 end
-
-    if reset then
-        for _, overlay in pairs(cdmFesteringOverlays) do
-            if overlay._glowActive then
-                local gt = addon:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
-                if gt and gt.stop then pcall(gt.stop, overlay) end
-            end
-            overlay:Hide(); overlay:SetParent(nil)
-        end
-        wipe(cdmFesteringOverlays)
-    end
-
-    cdmScanRunning = true
-    local current, added = nil, 0
-    local function ScanBatch()
-        for _ = 1, 40 do
-            current = EnumerateFrames(current)
-            if not current then
-                cdmScanRunning = false
-                addon._lastCDMScanAdded = added
-                return
-            end
-            if not cdmFesteringOverlays[current]
-                and current.Icon and type(current.Icon) == "table" and current.Icon.GetTexture then
-                local ok, texture = pcall(current.Icon.GetTexture, current.Icon)
-                local id = ok and texture and tostring(texture)
-                local kind = nil
-                if DKForceDB.trackCDMFestering and (id == "3997563" or id == "879926") then kind = "festering" end
-                if kind then
-                    local overlay = CreateFrame("Frame", nil, current)
-                    overlay:SetFrameStrata("HIGH"); overlay:SetAllPoints(current)
-                    overlay:SetFrameLevel(current:GetFrameLevel() + 10)
-                    overlay._targetFrame, overlay._glowActive = current, false
-                    overlay:Hide()
-                    cdmFesteringOverlays[current] = overlay
-                    added = added + 1
-                end
-            end
-        end
-        C_Timer.After(0, ScanBatch)
-    end
-    C_Timer.After(0, ScanBatch)
-    return 0
 end
 
 -- Keep the public rescan functions used by the settings button, slash command,
@@ -954,11 +754,12 @@ end
 
 function addon:ShowSuddenDoomGlows()
     suddenDoomActive = true
+    local masterEnabled = SuddenDoomEnabled()
     local overlays = DKForceDB.trackCDMSuddenDoom and cdmSuddenDoomOverlays or suddenDoomOverlays
     for _, overlay in pairs(overlays) do
         local target = overlay._targetFrame
         local s = GetSuddenDoomOverlaySettings(overlay)
-        if target and target:IsVisible() and s and s.enabled then
+        if masterEnabled and target and target:IsVisible() and s and s.enabled then
             overlay:Show()
             if not overlay._glowActive then
                 local gt = addon:GetGlowTypeByID(s.glowType)
@@ -974,12 +775,13 @@ end
 function addon:RefreshSuddenDoomGlows()
     if suddenDoomActive then
         addon:StopSuddenDoomGlows()
-        if addon:IsSuddenDoomActive() then addon:ShowSuddenDoomGlows() end
+        if SuddenDoomEnabled() and addon:IsSuddenDoomActive() then addon:ShowSuddenDoomGlows() end
     end
 end
 
 function addon:TestSuddenDoomGlow(spellKey)
     local shown = 0
+    if not SuddenDoomEnabled() then return shown end
     local overlays = DKForceDB.trackCDMSuddenDoom and cdmSuddenDoomOverlays or suddenDoomOverlays
     for _, overlay in pairs(overlays) do
         if overlay._spellKey == spellKey and overlay._targetFrame and overlay._targetFrame:IsVisible() then
@@ -997,26 +799,7 @@ end
 function addon:StopAll()
     StopFesteringGlow()
     addon:StopSuddenDoomGlows()
-    addon:StopBloodDnDReminder()
     addon:StopDnDMissingGlow()
-end
-
--- Task 9 removes the bloodDnDReady bookkeeping below along with the rest
--- of the Blood D&D readiness glow (the Death and Decay tracker window that
--- used to live here has been removed).
-function addon:OnDeathAndDecayCast()
-    -- Blood DnD is ready again after its normal cooldown, or sooner when
-    -- Crimson Scourge procs (handled by RefreshBloodDnDReminder above).
-    if addon:IsBloodSpec() then
-        bloodDnDReady = false
-        if bloodDnDReadyTimer then bloodDnDReadyTimer:Cancel() end
-        bloodDnDReadyTimer = C_Timer.NewTimer(BLOOD_DND_COOLDOWN, function()
-            bloodDnDReadyTimer = nil
-            bloodDnDReady = true
-            addon:RefreshBloodDnDReminder()
-        end)
-        addon:RefreshBloodDnDReminder()
-    end
 end
 
 -- -------------------------------------------------------
@@ -1038,14 +821,6 @@ end
 local function DnDMissingEnabled()
     local settings = DnDMissingSettings()
     return settings and settings.enabled or false
-end
-
--- The readiness reminder owns the same Cooldown Manager icon.  Once Death and
--- Decay is ready, "press it" replaces "step back into it" -- you cannot return
--- to a patch that has already expired -- so never stack the two glows.
-local function BloodDnDGlowActiveOn(frame)
-    local overlay = cdmBloodDnDOverlays[frame]
-    return (overlay and overlay._glowActive) or false
 end
 
 local function ClearDnDMissingGlow(overlay)
@@ -1079,11 +854,10 @@ function addon:ShowDnDMissingGlow()
     if not DnDMissingEnabled() then return end
     dndMissingGlowActive = true
 
-    local function applyOverlay(overlay, shared)
+    local function applyOverlay(overlay)
         local target = overlay._targetFrame
-        -- Never decorate a hidden or recycled frame, and yield the shared
-        -- Cooldown Manager icon while the readiness glow has it.
-        if target and target:IsVisible() and not (shared and BloodDnDGlowActiveOn(target)) then
+        -- Never decorate a hidden or recycled frame.
+        if target and target:IsVisible() then
             overlay:Show()
             ApplyDnDMissingGlow(overlay)
         else
@@ -1092,8 +866,8 @@ function addon:ShowDnDMissingGlow()
         end
     end
 
-    for _, overlay in pairs(dndMissingBarOverlays) do applyOverlay(overlay, false) end
-    for _, overlay in pairs(cdmDnDMissingOverlays) do applyOverlay(overlay, true) end
+    for _, overlay in pairs(dndMissingBarOverlays) do applyOverlay(overlay) end
+    for _, overlay in pairs(cdmDnDMissingOverlays) do applyOverlay(overlay) end
 end
 
 -- Action-bar targets.  ButtonScanner reports Death and Decay because
@@ -1195,21 +969,282 @@ dndMissingWatcher:SetScript("OnUpdate", function(_, elapsed)
     end
 end)
 
+-- -------------------------------------------------------
+-- Unholy chain prompt: Soul Reaper -> Blightfall
+-- -------------------------------------------------------
+-- Icon prompt only.  Upstream also drew a scrolling timeline lane; DK Force
+-- keeps just the single movable icon with its countdown and "NOW" glow.
+local BLIGHTFALL_GRACE = 5
+local blightIconFrame
+local blightState
+local blightTest = false
+local blightLastCue
+local blightVoiceID
+
+local function BlightfallSettings()
+    return DKForceDB and DKForceDB.blightfallChain
+end
+
+local function BlightfallFallbackSound(now)
+    if now then
+        PlaySound(SOUNDKIT.READY_CHECK, "Master")
+    else
+        PlaySound(SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "Master")
+    end
+end
+
+local function BlightfallSpeak(text, now)
+    local s = BlightfallSettings()
+    if not s or not s.soundEnabled then return end
+    if C_VoiceChat and C_VoiceChat.GetTtsVoices and C_VoiceChat.SpeakText then
+        if not blightVoiceID then
+            local voices = C_VoiceChat.GetTtsVoices()
+            blightVoiceID = voices and voices[1] and voices[1].voiceID
+        end
+        if blightVoiceID then
+            if C_VoiceChat.StopSpeakingText then pcall(C_VoiceChat.StopSpeakingText) end
+            C_Timer.After(0, function()
+                local volume = math.max(0, math.min(100, s.soundVolume or 100))
+                local ok = pcall(C_VoiceChat.SpeakText, blightVoiceID, text, 0, volume, true)
+                if not ok then BlightfallFallbackSound(now) end
+            end)
+            return
+        end
+    end
+    BlightfallFallbackSound(now)
+end
+
+local function BlightfallStepInfo(step)
+    if step == "BLIGHTFALL" then
+        return addon.SPELLS.BLIGHTFALL.id, "Blightfall", addon.SPELLS.BLIGHTFALL.icon
+    end
+    return addon.SPELLS.SOUL_REAPER.id, "Soul Reaper", 636333
+end
+
+local function StopBlightfallReadyGlow(frame)
+    if not (frame and frame._glowActive) then return end
+    for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
+        if glowType.stop then pcall(glowType.stop, frame) end
+    end
+    frame._glowActive = false
+end
+
+local function StartBlightfallReadyGlow(frame)
+    if not frame then return end
+    local settings = BlightfallSettings()
+    local glowType = settings and addon:GetGlowTypeByID(settings.glowType or "button")
+    if not (glowType and glowType.start) then return end
+    StopBlightfallReadyGlow(frame)
+    if pcall(glowType.start, frame, settings) then frame._glowActive = true end
+end
+
+local function UpdateBlightfallIcon(self)
+    if not blightState then StopBlightfallReadyGlow(self); self:Hide(); return end
+    local raw = blightState.delay - (GetTime() - blightState.started)
+    if blightTest and raw <= 0 then
+        local s = BlightfallSettings()
+        local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
+        local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
+        blightState = { step = nextStep, delay = delay, started = GetTime() }
+        blightLastCue = nil
+        return
+    elseif raw < -BLIGHTFALL_GRACE then
+        blightState = nil
+        StopBlightfallReadyGlow(self)
+        self:Hide()
+        return
+    end
+    local _, label, iconID = BlightfallStepInfo(blightState.step)
+    self.icon:SetTexture(iconID)
+    if raw <= 0 then
+        self.time:SetText("NOW")
+        self.label:SetText(label)
+        if not self._glowActive then StartBlightfallReadyGlow(self) end
+    else
+        self.time:SetText(string.format("%.1f", raw))
+        self.label:SetText(label)
+        StopBlightfallReadyGlow(self)
+    end
+    local cue
+    if raw <= 0.05 then cue = 0
+    else
+        local rounded = math.ceil(raw)
+        if rounded == 5 or rounded == 3 or rounded == 2 or rounded == 1 then cue = rounded end
+    end
+    if cue ~= nil and cue ~= blightLastCue then
+        blightLastCue = cue
+        if cue == 5 then BlightfallSpeak(label .. " in", false)
+        elseif cue == 0 then BlightfallSpeak("Now", true)
+        else BlightfallSpeak(tostring(cue), false) end
+    end
+end
+
+local function CreateBlightfallIconFrame()
+    if blightIconFrame then return blightIconFrame end
+    local f = CreateFrame("Frame", "DKForceBlightfallIconAlert", UIParent, "BackdropTemplate")
+    f:SetSize(64, 64)
+    f:SetPoint("CENTER", UIParent, "CENTER", 0, -70)
+    -- MEDIUM let Blizzard panels draw over the prompt.  HIGH keeps it above
+    -- them while staying below DIALOG, so the settings window and static
+    -- popups still sit on top.  The explicit level matches the +10-over-parent
+    -- idiom the button overlays use.
+    f:SetFrameStrata("HIGH")
+    f:SetFrameLevel(UIParent:GetFrameLevel() + 10)
+    f:SetClampedToScreen(true)
+    f:SetMovable(true)
+    f:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+    f:SetBackdropBorderColor(0.72, 0.40, 1.00, 0.95)
+    f.icon = f:CreateTexture(nil, "ARTWORK")
+    f.icon:SetAllPoints(f)
+    f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    f.time = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    f.time:SetPoint("CENTER", f, "CENTER", 0, 0)
+    f.time:SetTextColor(1, 1, 1, 1)
+    f.time:SetShadowColor(0, 0, 0, 1)
+    f.time:SetShadowOffset(1, -1)
+    f.label = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    f.label:SetPoint("TOP", f, "BOTTOM", 0, -4)
+    f.label:SetTextColor(0.82, 0.55, 1.00, 1)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        local s = BlightfallSettings()
+        if s and not s.iconLocked then self:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local point, _, relPoint, x, y = self:GetPoint()
+        local s = BlightfallSettings()
+        if s then s.iconPosition = { point, relPoint, x, y } end
+    end)
+    f:SetScript("OnUpdate", UpdateBlightfallIcon)
+    f:Hide()
+    blightIconFrame = f
+    return f
+end
+
+local function ApplyBlightfallSettings()
+    local s = BlightfallSettings()
+    if not s then return end
+    local iconFrame = CreateBlightfallIconFrame()
+    local fontSize = math.max(10, math.min(32, s.fontSize or 18))
+    iconFrame.time:SetFont(STANDARD_TEXT_FONT, fontSize, "OUTLINE")
+    iconFrame.label:SetFont(STANDARD_TEXT_FONT, math.max(10, fontSize - 4), "OUTLINE")
+    local iconSize = math.max(36, math.min(128, s.iconSize or 64))
+    iconFrame:SetSize(iconSize, iconSize)
+    iconFrame:EnableMouse(not s.iconLocked or blightTest)
+    if s.iconPosition then
+        iconFrame:ClearAllPoints()
+        iconFrame:SetPoint(s.iconPosition[1], UIParent, s.iconPosition[2], s.iconPosition[3], s.iconPosition[4])
+    end
+    if blightState then
+        local raw = blightState.delay - (GetTime() - blightState.started)
+        if raw <= 0 then
+            if s.enabled or blightTest then StartBlightfallReadyGlow(iconFrame) end
+        else
+            StopBlightfallReadyGlow(iconFrame)
+        end
+    end
+    -- Upstream also accepted the timeline as a reason to keep running.  The
+    -- icon is the only display here, so `enabled` alone is the master switch.
+    if (not s.enabled and not blightTest)
+        or (not blightTest and not addon:IsBlightfallTalented()) then
+        StopBlightfallReadyGlow(iconFrame)
+        iconFrame:Hide(); blightState = nil
+    end
+end
+
+function addon:OnBlightfallChainSpellCast(spellID)
+    local s = BlightfallSettings()
+    if not s or not s.enabled or not addon:IsUnholySpec()
+        or not addon:IsBlightfallTalented() then return end
+    -- Only the three chain spells are relevant; an unrelated cast must leave a
+    -- running preview alone.
+    if spellID ~= addon.SPELLS.DARK_TRANSFORMATION.id
+        and spellID ~= addon.SPELLS.SOUL_REAPER.id
+        and spellID ~= addon.SPELLS.BLIGHTFALL.id then
+        return
+    end
+    -- A real cast supersedes a preview.  Ending the test here, before any state
+    -- is installed or cleared below, keeps the test auto-loop in
+    -- UpdateBlightfallIcon from capturing real cast data, and stops a later
+    -- panel hide or page change from wiping a genuine countdown through
+    -- StopBlightfallTest.  The preview's fake state goes with it, so a real
+    -- Soul Reaper cast cannot chain off a step that was never really cast.
+    if blightTest then blightTest = false; blightState = nil end
+    -- Dark Transformation opens the chain: it starts the Soul Reaper
+    -- countdown, and casting Soul Reaper then starts the Blightfall one.
+    -- This is the only reason the spell is still tracked at all.
+    if spellID == addon.SPELLS.DARK_TRANSFORMATION.id then
+        blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
+    elseif spellID == addon.SPELLS.SOUL_REAPER.id and blightState and blightState.step == "SOUL_REAPER" then
+        blightState = { step = "BLIGHTFALL", delay = s.blightfallDelay or 7.5, started = GetTime() }
+    -- Blightfall always completes/resets the chain. It can be cast without the
+    -- tracked Soul Reaper step, so never leave an older countdown running.
+    elseif spellID == addon.SPELLS.BLIGHTFALL.id then
+        blightState = nil
+    else
+        return
+    end
+    blightLastCue = nil
+    ApplyBlightfallSettings()
+    local iconFrame = CreateBlightfallIconFrame()
+    if blightState then
+        iconFrame:SetShown(s.enabled)
+    else
+        StopBlightfallReadyGlow(iconFrame)
+        iconFrame:Hide()
+    end
+end
+
+function addon:RefreshBlightfallTracker() ApplyBlightfallSettings() end
+
+function addon:TestBlightfallTracker()
+    local s = BlightfallSettings()
+    if not s then return end
+    blightTest = true
+    blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
+    blightLastCue = nil
+    local iconFrame = CreateBlightfallIconFrame()
+    ApplyBlightfallSettings()
+    -- The test must be visible even while the feature itself is switched off,
+    -- which is what the blightTest bypass in ApplyBlightfallSettings is for.
+    iconFrame:SetShown(true)
+end
+
+function addon:StopBlightfallTest()
+    -- Safe to call when no test is running.  The settings panel calls this on
+    -- every page change and every hide, and a countdown started by a real cast
+    -- must survive both.
+    if not blightTest then return end
+    blightTest = false
+    blightState = nil
+    if blightIconFrame then
+        StopBlightfallReadyGlow(blightIconFrame)
+        blightIconFrame:Hide()
+        ApplyBlightfallSettings()
+    end
+end
+
 local castFrame = CreateFrame("Frame")
 castFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 castFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
 castFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+castFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 
 castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
-    if event == "UNIT_SPELLCAST_SUCCEEDED" then
+    if event == "PLAYER_TALENT_UPDATE" then
+        if not addon:IsBlightfallTalented() then addon:StopBlightfallTest() end
+        -- TRAIT_CONFIG_UPDATED already covers the live path; this keeps the
+        -- two talent events symmetrical.
+        addon:RefreshBlightfallTracker()
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         if unit ~= "player" then return end
         if spellID == addon.SPELLS.FESTERING_STRIKE.id then
             addon:OnFesteringStrikeCast()
         elseif spellID == addon.SPELLS.FESTERING_SCYTHE.id then
             addon:OnFesteringScytheCast()
-        elseif spellID == addon.SPELLS.DEATH_AND_DECAY.id then
-            addon:OnDeathAndDecayCast()
         end
+        addon:OnBlightfallChainSpellCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
@@ -1302,6 +1337,9 @@ end
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+-- PLAYER_SPECIALIZATION_CHANGED does not fire on a same-spec loadout swap, so
+-- the Blightfall talent gate would go stale without this.
+initFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 
 initFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
@@ -1341,21 +1379,21 @@ initFrame:SetScript("OnEvent", function(_, event)
                 end
             end
         end
-        if not DKForceDB.bloodDnd then
-            DKForceDB.bloodDnd = CopyTable(addon.DEFAULT_DB.bloodDnd)
-        else
-            for k, v in pairs(addon.DEFAULT_DB.bloodDnd) do
-                if DKForceDB.bloodDnd[k] == nil then
-                    DKForceDB.bloodDnd[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
         if not DKForceDB.bloodDndMissing then
             DKForceDB.bloodDndMissing = CopyTable(addon.DEFAULT_DB.bloodDndMissing)
         else
             for k, v in pairs(addon.DEFAULT_DB.bloodDndMissing) do
                 if DKForceDB.bloodDndMissing[k] == nil then
                     DKForceDB.bloodDndMissing[k] = type(v) == "table" and CopyTable(v) or v
+                end
+            end
+        end
+        if not DKForceDB.blightfallChain then
+            DKForceDB.blightfallChain = CopyTable(addon.DEFAULT_DB.blightfallChain)
+        else
+            for k, v in pairs(addon.DEFAULT_DB.blightfallChain) do
+                if DKForceDB.blightfallChain[k] == nil then
+                    DKForceDB.blightfallChain[k] = type(v) == "table" and CopyTable(v) or v
                 end
             end
         end
@@ -1421,12 +1459,6 @@ initFrame:SetScript("OnEvent", function(_, event)
             close:SetPoint("TOPRIGHT", window, "TOPRIGHT", -4, -4)
             close:SetScript("OnClick", function() window:Hide() end)
             window.dkforceCloseButton = close
-            local modernCloseText = close:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-            modernCloseText:SetPoint("CENTER", close, "CENTER", 0, 1)
-            modernCloseText:SetText("X")
-            modernCloseText:SetTextColor(0.62, 0.79, 1.00, 1)
-            modernCloseText:Hide()
-            window.dkforceModernCloseText = modernCloseText
 
             local standalonePanel = addon:CreateConfigPanel(true)
             standalonePanel:SetParent(window)
@@ -1450,13 +1482,14 @@ initFrame:SetScript("OnEvent", function(_, event)
 
         print("|cffcc0000DK Force|r loaded — |cffaaaaaa/dkf|r for options")
 
-    elseif event == "PLAYER_SPECIALIZATION_CHANGED" then
+    elseif event == "PLAYER_SPECIALIZATION_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
         addon:StopAll()
+        addon:RefreshBlightfallTracker()
         C_Timer.After(0.5, function() addon:ScanAllButtons() end)
         C_Timer.After(1, function()
             if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
-            addon:RefreshBloodDnDReminder()
             addon:RefreshDnDMissingGlows()
+            addon:RefreshBlightfallTracker()
         end)
         -- CDM rescan is handled by ButtonScanner's PLAYER_SPECIALIZATION_CHANGED handler
     end

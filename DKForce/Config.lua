@@ -3,39 +3,24 @@
 -- every existing saved variable and gameplay callback intact.
 
 local addonName, addon = ...
-local LCG = LibStub("LibCustomGlow-1.0")
 
 local PAGE_ITEMS = {
-    { text = "Festering Scythe", value = "festering" },
-    { text = "Sudden Doom", value = "suddendoom" },
+    { text = "Festering Scythe",         value = "festering" },
+    { text = "Sudden Doom",              value = "suddendoom" },
     { text = "Death Coil (Sudden Doom)", value = "deathcoil" },
-    { text = "Epidemic (Sudden Doom)", value = "epidemic" },
-    { text = "Death and Decay (Blood)", value = "blooddnd" },
-    { text = "Stand In Death and Decay (Blood)", value = "blooddndmissing" },
+    { text = "Epidemic (Sudden Doom)",   value = "epidemic" },
+    { text = "Blightfall & Soul Reaper", value = "blightfall" },
+    { text = "Stand In Death and Decay", value = "blooddndmissing" },
 }
 
-local BLOOD_ONLY_KEYS = { blooddnd = true, blooddndmissing = true }
+local BLOOD_ONLY_KEYS = { blooddndmissing = true }
 
 local UNHOLY_PAGE_ITEMS = {}
 for _, item in ipairs(PAGE_ITEMS) do
     if not BLOOD_ONLY_KEYS[item.value] then UNHOLY_PAGE_ITEMS[#UNHOLY_PAGE_ITEMS + 1] = item end
 end
 local BLOOD_PAGE_ITEMS = {
-    { text = "Death and Decay", value = "blooddnd" },
     { text = "Stand In Death and Decay", value = "blooddndmissing" },
-}
-
-local PAGE_LABEL = {}
-for _, item in ipairs(PAGE_ITEMS) do PAGE_LABEL[item.value] = item.text end
-
--- Classic is the only window look; DEFAULT_PALETTE is kept only as the
--- built-in fallback color set the custom dropdown widget styles itself
--- from (see CreateDropdown / AttachModernDropdown below).
-local DEFAULT_PALETTE = {
-    titleCode = "4da3ff", accent = { 0.30, 0.64, 1.00 },
-    window = { 0.012, 0.024, 0.040 }, panel = { 0.018, 0.035, 0.055 },
-    card = { 0.018, 0.043, 0.070 }, control = { 0.035, 0.075, 0.105 },
-    border = { 0.10, 0.25, 0.40 }, text = { 0.82, 0.90, 1.00 }, subtext = { 0.67, 0.75, 0.84 },
 }
 
 local PRESETS = {
@@ -112,156 +97,6 @@ local function CreateCheck(parent, text, x, y, getter, setter)
 end
 
 local dropdownSerial = 0
-local activeStandalonePanel
-
-local function AttachModernDropdown(dd, parent, width, itemsProvider, currentProvider, setter)
-    if not activeStandalonePanel then return end
-    local panel = activeStandalonePanel
-    panel.dkforceModernDropdowns = panel.dkforceModernDropdowns or {}
-
-    local modern = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    modern:SetSize(width + 28, 25)
-    modern:SetPoint("TOPLEFT", dd, "TOPLEFT", 17, -3)
-    modern:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    modern:SetBackdropColor(0.035, 0.075, 0.105, 1)
-    modern:SetBackdropBorderColor(0.20, 0.36, 0.48, 1)
-    modern:Hide()
-
-    modern.label = modern:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    modern.label:SetPoint("LEFT", modern, "LEFT", 10, 0)
-    modern.label:SetPoint("RIGHT", modern, "RIGHT", -25, 0)
-    modern.label:SetJustifyH("LEFT")
-    modern.arrow = modern:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    modern.arrow:SetPoint("RIGHT", modern, "RIGHT", -8, 1)
-    modern.arrow:SetText("v")
-    modern.arrow:SetTextColor(0.42, 0.69, 0.86, 1)
-
-    local menu = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
-    menu:SetFrameStrata("TOOLTIP")
-    menu:SetClampedToScreen(true)
-    menu:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
-    })
-    menu:SetBackdropColor(0.025, 0.065, 0.090, 0.99)
-    menu:SetBackdropBorderColor(0.18, 0.55, 0.68, 1)
-    menu:SetPoint("TOPLEFT", modern, "BOTTOMLEFT", 0, -2)
-    menu:SetWidth(width + 28)
-    menu:Hide()
-    modern.menu = menu
-    modern.rows = {}
-
-    local function CloseMenu()
-        menu:Hide()
-        modern.arrow:SetText("v")
-    end
-
-    local function RefreshRows()
-        local items = itemsProvider()
-        local current = currentProvider()
-        local palette = modern.palette or DEFAULT_PALETTE
-        local rowHeight = 22
-        menu:SetHeight(math.max(8, (#items * rowHeight) + 6))
-        for index, item in ipairs(items) do
-            local itemValue = item.value
-            local itemText = item.text
-            local row = modern.rows[index]
-            if not row then
-                row = CreateFrame("Button", nil, menu, "BackdropTemplate")
-                row:SetHeight(rowHeight)
-                row:SetPoint("TOPLEFT", menu, "TOPLEFT", 3, -3 - ((index - 1) * rowHeight))
-                row:SetPoint("RIGHT", menu, "RIGHT", -3, 0)
-                row:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
-                row.text = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                row.text:SetPoint("LEFT", row, "LEFT", 10, 0)
-                row.text:SetPoint("RIGHT", row, "RIGHT", -8, 0)
-                row.text:SetJustifyH("LEFT")
-                row:SetScript("OnEnter", function(self)
-                    local p = modern.palette or DEFAULT_PALETTE
-                    self:SetBackdropColor(p.accent[1] * 0.20, p.accent[2] * 0.20, p.accent[3] * 0.20, 1)
-                end)
-                row:SetScript("OnLeave", function(self)
-                    local p = modern.palette or DEFAULT_PALETTE
-                    self:SetBackdropColor(self.selected and p.accent[1] * 0.14 or 0,
-                        self.selected and p.accent[2] * 0.14 or 0,
-                        self.selected and p.accent[3] * 0.14 or 0, self.selected and 1 or 0)
-                end)
-                modern.rows[index] = row
-            end
-            row.selected = current == itemValue
-            row.text:SetText(itemText)
-            row.text:SetTextColor(row.selected and palette.accent[1] or palette.text[1],
-                row.selected and palette.accent[2] or palette.text[2],
-                row.selected and palette.accent[3] or palette.text[3], 1)
-            row:SetBackdropColor(row.selected and palette.accent[1] * 0.14 or 0,
-                row.selected and palette.accent[2] * 0.14 or 0,
-                row.selected and palette.accent[3] * 0.14 or 0, row.selected and 1 or 0)
-            row:SetScript("OnClick", function()
-                setter(itemValue)
-                UIDropDownMenu_SetText(dd, itemText)
-                UIDropDownMenu_SetSelectedValue(dd, itemValue)
-                modern.label:SetText(itemText)
-                CloseMenu()
-            end)
-            row:Show()
-        end
-        for index = #items + 1, #modern.rows do modern.rows[index]:Hide() end
-    end
-
-    modern:SetScript("OnClick", function()
-        if menu:IsShown() then
-            CloseMenu()
-        else
-            for _, other in ipairs(panel.dkforceModernDropdowns) do
-                if other ~= modern and other.menu then other.menu:Hide() end
-            end
-            RefreshRows()
-            menu:Show()
-            modern.arrow:SetText("^")
-        end
-    end)
-    modern:SetScript("OnEnter", function(self)
-        local p = modern.palette or DEFAULT_PALETTE
-        self:SetBackdropBorderColor(p.accent[1], p.accent[2], p.accent[3], 1)
-    end)
-    modern:SetScript("OnLeave", function(self)
-        local p = modern.palette or DEFAULT_PALETTE
-        self:SetBackdropBorderColor(p.border[1], p.border[2], p.border[3], 1)
-    end)
-
-    modern.refresh = function()
-        local current = currentProvider()
-        local label = current
-        for _, item in ipairs(itemsProvider()) do
-            if item.value == current then label = item.text break end
-        end
-        modern.label:SetText(label or "")
-        if menu:IsShown() then RefreshRows() end
-    end
-    modern.SetModernMode = function(_, enabled, palette)
-        CloseMenu()
-        if palette then
-            modern.palette = palette
-            modern:SetBackdropColor(palette.control[1], palette.control[2], palette.control[3], 1)
-            modern:SetBackdropBorderColor(palette.border[1], palette.border[2], palette.border[3], 1)
-            modern.label:SetTextColor(palette.text[1], palette.text[2], palette.text[3], 1)
-            modern.arrow:SetTextColor(palette.accent[1], palette.accent[2], palette.accent[3], 1)
-            menu:SetBackdropColor(palette.control[1] * 0.72, palette.control[2] * 0.72, palette.control[3] * 0.72, 0.99)
-            menu:SetBackdropBorderColor(palette.border[1], palette.border[2], palette.border[3], 1)
-        end
-        dd:SetShown(not enabled)
-        modern:SetShown(enabled)
-        if enabled then modern.refresh() end
-    end
-    dd.dkforceModern = modern
-    table.insert(panel.dkforceModernDropdowns, modern)
-end
-
 local function CreateDropdown(parent, x, y, width, itemsProvider, currentProvider, setter)
     dropdownSerial = dropdownSerial + 1
     local dd = CreateFrame("Frame", "DKForceV2Dropdown" .. dropdownSerial, parent, "UIDropDownMenuTemplate")
@@ -294,9 +129,7 @@ local function CreateDropdown(parent, x, y, width, itemsProvider, currentProvide
         end
         UIDropDownMenu_SetText(dd, label or "")
         UIDropDownMenu_SetSelectedValue(dd, current)
-        if dd.dkforceModern then dd.dkforceModern.refresh() end
     end
-    AttachModernDropdown(dd, parent, width, itemsProvider, currentProvider, setter)
     return dd
 end
 
@@ -430,7 +263,6 @@ end
 
 function addon:CreateConfigPanel(standalone)
     local panel = CreateFrame("Frame", nil, nil, "BackdropTemplate")
-    activeStandalonePanel = standalone and panel or nil
     panel.name = "DK Force"
     local prefix = standalone and "DKForceStandaloneV2" or "DKForceSettingsV2"
     panel:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8" })
@@ -460,7 +292,7 @@ function addon:CreateConfigPanel(standalone)
 
     -- Auto follows the character's live specialization when the panel is
     -- first created instead of retaining the Unholy default page.
-    if ActiveConfigSpec() == "blood" then selectedKey = "blooddnd" end
+    if ActiveConfigSpec() == "blood" then selectedKey = "blooddndmissing" end
 
     if not StaticPopupDialogs.DKFORCE_V2_RELOAD_MINIMAP then
         StaticPopupDialogs.DKFORCE_V2_RELOAD_MINIMAP = {
@@ -500,7 +332,7 @@ function addon:CreateConfigPanel(standalone)
         function() return DKForceDB.configSpecView or "auto" end,
         function(value)
             DKForceDB.configSpecView = value
-            panel:ShowPage(ActiveConfigSpec() == "blood" and "blooddnd" or "festering")
+            panel:ShowPage(ActiveConfigSpec() == "blood" and "blooddndmissing" or "festering")
         end)
     specDropdown:ClearAllPoints()
     specDropdown:SetPoint("LEFT", specLabel, "RIGHT", -6, 0)
@@ -548,7 +380,6 @@ function addon:CreateConfigPanel(standalone)
         for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
             if glowType.stop then
                 if page.previewIcon then pcall(glowType.stop, page.previewIcon) end
-                if page.previewBar then pcall(glowType.stop, page.previewBar) end
             end
         end
     end
@@ -557,29 +388,28 @@ function addon:CreateConfigPanel(standalone)
         if selectedKey == "festering" and addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
         if (selectedKey == "deathcoil" or selectedKey == "epidemic") and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
         if selectedKey == "suddendoom" and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
-        if selectedKey == "blooddnd" and addon.RefreshBloodDnDReminder then addon:RefreshBloodDnDReminder() end
         if selectedKey == "blooddndmissing" and addon.RefreshDnDMissingGlows then addon:RefreshDnDMissingGlows() end
+        if selectedKey == "blightfall" and addon.RefreshBlightfallTracker then addon:RefreshBlightfallTracker() end
     end
 
     local function RefreshPreview(page)
         StopPreview(page)
         if not page then return end
         if page.previewIcon then page.previewIcon:Show() end
-        if page.previewBar then page.previewBar:Hide() end
         local settings
         if selectedKey == "festering" then settings = DKForceDB.spells.festeringScythe
         elseif selectedKey == "deathcoil" then settings = DKForceDB.spells.deathCoil
         elseif selectedKey == "epidemic" then settings = DKForceDB.spells.epidemic
         elseif selectedKey == "suddendoom" then settings = DKForceDB.suddenDoomGlow end
-        if selectedKey == "blooddnd" then settings = DKForceDB.bloodDnd end
         if selectedKey == "blooddndmissing" then settings = DKForceDB.bloodDndMissing end
+        if selectedKey == "blightfall" then settings = DKForceDB.blightfallChain end
         if not settings or not settings.enabled then return end
         local target = page.previewIcon
         local glowType = addon:GetGlowTypeByID(settings.glowType)
         if glowType and glowType.start then pcall(glowType.start, target, settings) end
     end
 
-    local function CreatePreview(card, spellID, isRunic)
+    local function CreatePreview(card, spellID)
         local icon = CreateFrame("Frame", nil, card, "BackdropTemplate")
         icon:SetSize(88, 88)
         icon:SetPoint("CENTER", card, "CENTER", 0, -7)
@@ -589,21 +419,8 @@ function addon:CreateConfigPanel(standalone)
             edgeSize = 1,
         })
         icon:SetBackdropBorderColor(0.35, 0.35, 0.35, 1)
-        local bar = CreateFrame("StatusBar", nil, card, "BackdropTemplate")
-        bar:SetSize(170, 22)
-        bar:SetPoint("CENTER", card, "CENTER", 0, -7)
-        bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
-        bar:SetStatusBarColor(0, 0.72, 1, 1)
-        bar:SetMinMaxValues(0, 100)
-        bar:SetValue(100)
-        bar:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
-        bar:SetBackdropColor(0, 0, 0, 1)
-        bar.text = bar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        bar.text:SetPoint("CENTER")
-        bar.text:SetText("100 Runic Power")
-        bar:SetShown(isRunic)
-        icon:SetShown(not isRunic)
-        return icon, bar
+        icon:Show()
+        return icon
     end
 
     local function AddSelector(page, card, fieldName)
@@ -622,12 +439,15 @@ function addon:CreateConfigPanel(standalone)
         if key == "deathcoil" then return DKForceDB.spells.deathCoil end
         if key == "epidemic" then return DKForceDB.spells.epidemic end
         if key == "suddendoom" then return DKForceDB.suddenDoomGlow end
-        if key == "blooddnd" then return DKForceDB.bloodDnd end
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
+        if key == "blightfall" then return DKForceDB.blightfallChain end
     end
 
-    local function BuildAppearance(page, card, key)
+    local function BuildAppearance(page, card, key, startY)
         page.appearanceControls = {}
+        -- Pages that put their own controls above the glow sliders pass a
+        -- lower start position; everything else keeps the original -38.
+        local baseY = startY or -38
         -- Leave enough room for the numeric edit box on the right.  The same
         -- page is used both standalone and inside Blizzard's narrower AddOns
         -- settings panel, so wide sliders can otherwise escape the card.
@@ -652,7 +472,7 @@ function addon:CreateConfigPanel(standalone)
             local visible = glowType == "pixel" and { "speed", "lines", "thickness", "alpha" }
                 or (glowType == "autocast" or glowType == "button") and { "speed", "alpha" }
                 or { "alpha" }
-            local y = -38
+            local y = baseY
             for _, control in pairs(controls) do control:Hide() end
             for _, name in ipairs(visible) do
                 local control = controls[name]
@@ -685,7 +505,6 @@ function addon:CreateConfigPanel(standalone)
         end
         local ENABLE_LABELS = {
             festering       = "Enable glow",
-            blooddnd        = "Glow when Death and Decay is ready",
             blooddndmissing = "Glow when you are outside your Death and Decay",
         }
         page.enable = CreateCheck(page.settingsCard,
@@ -693,7 +512,7 @@ function addon:CreateConfigPanel(standalone)
             14, -76, function() return settings().enabled end,
             function(value)
                 settings().enabled = value
-                if (key == "blooddnd" or key == "blooddndmissing")
+                if key == "blooddndmissing"
                     and addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
                 -- This reminder also decorates action-bar copies, which are
                 -- only built while it is enabled.
@@ -727,7 +546,7 @@ function addon:CreateConfigPanel(standalone)
             page.colorSwatch.refresh(); changed()
         end)
 
-        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, spellID, false)
+        page.previewIcon = CreatePreview(page.previewCard, spellID)
         BuildAppearance(page, page.appearanceCard, key)
         if key == "blooddndmissing" then
             page.missingHint = CreateText(page.appearanceCard,
@@ -796,7 +615,7 @@ function addon:CreateConfigPanel(standalone)
         CreatePresetRow(page.glowCard, 14, -181, settings, function() page.colorSwatch.refresh(); changed() end)
         BuildAppearance(page, page.appearanceCard, "suddendoom")
 
-        page.previewIcon, page.previewBar = CreatePreview(page.previewCard, 81340, false)
+        page.previewIcon = CreatePreview(page.previewCard, 81340)
         page.refresh = function()
             page.selector.refresh()
             page.enable.refresh(); page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance()
@@ -805,12 +624,90 @@ function addon:CreateConfigPanel(standalone)
         pages.suddendoom = page
     end
 
+    local function BuildBlightfallPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "blightfall"
+        page.settingsCard = CreateCard(page, "Blightfall & Soul Reaper")
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.appearanceCard = CreateCard(page, "Button Glow appearance")
+        AddSelector(page, page.settingsCard)
+        local function settings() return DKForceDB.blightfallChain end
+        local function changed()
+            addon:RefreshBlightfallTracker(); RefreshPreview(page)
+        end
+        page.enable = CreateCheck(page.settingsCard, "Enable the chain prompt", 14, -76,
+            function() return settings().enabled end,
+            function(v) settings().enabled = v; changed() end)
+        page.sound = CreateCheck(page.settingsCard, "Voice / sound countdown", 14, -104,
+            function() return settings().soundEnabled end,
+            function(v) settings().soundEnabled = v end)
+        page.soundVolume = CreateSlider(page.settingsCard, "Voice Volume", 14, -138, 250, 0, 100, 5,
+            function() return settings().soundVolume end,
+            function(v) settings().soundVolume = v end)
+        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, -188, 250, 1, 12, 0.5,
+            function() return settings().soulReaperDelay end,
+            function(v) settings().soulReaperDelay = v; changed() end)
+        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall delay after Soul Reaper", 14, -238, 250, 1, 15, 0.5,
+            function() return settings().blightfallDelay end,
+            function(v) settings().blightfallDelay = v; changed() end)
+        page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -288, 250, 36, 128, 1,
+            function() return settings().iconSize or 64 end,
+            function(v) settings().iconSize = v; changed() end)
+        page.fontSize = CreateSlider(page.settingsCard, "Font Size", 14, -338, 250, 10, 32, 1,
+            function() return settings().fontSize or 18 end,
+            function(v) settings().fontSize = v; changed() end)
+        page.iconLock = CreateCheck(page.settingsCard, "Lock icon position", 14, -388,
+            function() return settings().iconLocked end,
+            function(v) settings().iconLocked = v; changed() end)
+        -- Kept short and raised so it still fits the shorter canvas Blizzard's
+        -- AddOns settings page gives this panel.
+        page.hint = CreateText(page.settingsCard,
+            "Unholy, Blightfall talented.  Dark Transformation starts the Soul Reaper "
+            .. "countdown; Soul Reaper starts the Blightfall one.  Unlock to drag the icon.",
+            14, -414, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+
+        page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)
+
+        local glowStyleLabel = CreateText(page.appearanceCard, "Glow Style:", 14, -38, "GameFontNormal")
+        page.glowDropdown = CreateDropdown(page.appearanceCard, 0, 0, 145,
+            function()
+                local items = {}
+                for _, glowType in ipairs(addon.GLOW_TYPES) do
+                    items[#items + 1] = { text = glowType.name, value = glowType.id }
+                end
+                return items
+            end,
+            function() return settings().glowType or "button" end,
+            function(value)
+                settings().glowType = value
+                page.refreshAppearance(); changed()
+            end)
+        page.glowDropdown:ClearAllPoints()
+        page.glowDropdown:SetPoint("LEFT", glowStyleLabel, "RIGHT", -8, -2)
+        page.colorSwatch = CreateColorControl(page.appearanceCard, 14, -76, "Glow Color:",
+            function() return settings().color end, changed)
+        CreatePresetRow(page.appearanceCard, 14, -108, settings, function()
+            page.colorSwatch.refresh(); changed()
+        end)
+        BuildAppearance(page, page.appearanceCard, "blightfall", -140)
+
+        page.refresh = function()
+            page.selector.refresh()
+            page.enable.refresh(); page.sound.refresh()
+            page.soundVolume.refresh(); page.soulDelay.refresh(); page.blightDelay.refresh()
+            page.iconSize.refresh(); page.fontSize.refresh(); page.iconLock.refresh()
+            page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance()
+            RefreshPreview(page)
+        end
+        pages.blightfall = page
+    end
+
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
     BuildGlowPage("deathcoil", "Death Coil - Sudden Doom", addon.SPELLS.DEATH_COIL.id)
     BuildGlowPage("epidemic", "Epidemic - Sudden Doom", addon.SPELLS.EPIDEMIC.id)
     BuildSuddenDoomPage()
-    BuildGlowPage("blooddnd", "Blood - Death and Decay Reminder", addon.SPELLS.DEATH_AND_DECAY.id)
     BuildGlowPage("blooddndmissing", "Blood - Stand In Death and Decay", addon.SPELLS.DEATH_AND_DECAY.id)
+    BuildBlightfallPage()
 
     local function LayoutPages()
         local width = pageHolder:GetWidth()
@@ -852,6 +749,18 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, lowerY)
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.ghoulHint:SetWidth(math.max(230, leftWidth - 36))
+            elseif page.layoutKind == "blightfall" then
+                -- One tall settings column on the left; the preview is kept
+                -- short so the glow appearance card below it never clips.
+                local previewHeight = 150
+                page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                page.settingsCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
+                page.settingsCard:SetWidth(leftWidth)
+                page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+                page.previewCard:SetSize(rightWidth, previewHeight)
+                page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, -(previewHeight + gap))
+                page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
+                page.hint:SetWidth(math.max(230, leftWidth - 32))
             elseif page.layoutKind == "glow" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -872,6 +781,10 @@ function addon:CreateConfigPanel(standalone)
         activePage:Show()
         for _, page in pairs(pages) do if page ~= activePage then page:Hide() end end
         testActive = false; testButton:SetText("Test")
+        -- The Blightfall test drives a screen-centred frame and TTS cues that
+        -- nothing on an action bar would clear, so it must never outlive the
+        -- panel.  This is a no-op when no test is running.
+        addon:StopBlightfallTest()
         cdmCheck:SetShown(pageKey == "festering" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
         cdmCheck.Text:SetText("Use Cooldown Manager (instead of action bars)")
         rescanButton:Show()
@@ -885,7 +798,7 @@ function addon:CreateConfigPanel(standalone)
         specDropdown.refresh()
         local activeSpec = ActiveConfigSpec()
         if activeSpec == "blood" and not BLOOD_ONLY_KEYS[selectedKey] then
-            selectedKey = "blooddnd"
+            selectedKey = "blooddndmissing"
         elseif activeSpec == "unholy" and BLOOD_ONLY_KEYS[selectedKey] then
             selectedKey = "festering"
         end
@@ -893,9 +806,9 @@ function addon:CreateConfigPanel(standalone)
         self:ShowPage(selectedKey)
     end
 
-    -- Modern skinning is intentionally runtime-only: no command, position,
-    -- page layout, or gameplay setting is changed.  It is applied solely to
-    -- the standalone panel and can be switched back to Classic immediately.
+    -- Skinning is runtime-only: no command, position, page layout, or
+    -- gameplay setting is changed.  It is applied solely to the standalone
+    -- panel and only ever restores the stock Classic control chrome.
     local function WalkRegions(frame, callback)
         if not frame then return end
         for _, region in ipairs({ frame:GetRegions() }) do callback(region) end
@@ -905,15 +818,15 @@ function addon:CreateConfigPanel(standalone)
         end
     end
 
-    local function SetButtonSkin(button, modern, palette)
+    local function SetButtonSkin(button)
         if not button or button:GetObjectType() ~= "Button" then return end
         if not button:GetText() or button:GetText() == "" then return end
         if not button._dkforceThemeReady then
             button._dkforceThemeReady = true
             -- UIPanelButtonTemplate also contains decorative texture regions
-            -- that are not returned by GetNormal/Pushed/HighlightTexture().
-            -- Preserve every stock layer so modern themes can hide the whole
-            -- Classic button chrome instead of merely tinting it.
+            -- that are not returned by GetNormal/Pushed/HighlightTexture(), so
+            -- capture every stock layer and its alpha before anything is
+            -- restored from it.
             button._dkforceOriginalButtonTextures = {}
             for _, region in ipairs({ button:GetRegions() }) do
                 if region:GetObjectType() == "Texture" then
@@ -923,57 +836,10 @@ function addon:CreateConfigPanel(standalone)
                     })
                 end
             end
-            button._dkforceOriginalNormal = button:GetNormalTexture()
-            button._dkforceOriginalPushed = button:GetPushedTexture()
-            button._dkforceOriginalHighlight = button:GetHighlightTexture()
-            button._dkforceOriginalNormalAlpha = button._dkforceOriginalNormal and button._dkforceOriginalNormal:GetAlpha() or 1
-            button._dkforceOriginalPushedAlpha = button._dkforceOriginalPushed and button._dkforceOriginalPushed:GetAlpha() or 1
-            button._dkforceOriginalHighlightAlpha = button._dkforceOriginalHighlight and button._dkforceOriginalHighlight:GetAlpha() or 1
             if button:GetFontString() then
                 button._dkforceOriginalFontColor = { button:GetFontString():GetTextColor() }
             end
-
-            local background = button:CreateTexture(nil, "BACKGROUND")
-            background:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
-            background:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
-            background:SetTexture("Interface\\Buttons\\WHITE8X8")
-            background:Hide()
-            button._dkforceModernButtonBackground = background
-
-            local highlight = button:CreateTexture(nil, "ARTWORK")
-            highlight:SetPoint("TOPLEFT", button, "TOPLEFT", 2, -2)
-            highlight:SetPoint("BOTTOMRIGHT", button, "BOTTOMRIGHT", -2, 2)
-            highlight:SetTexture("Interface\\Buttons\\WHITE8X8")
-            highlight:Hide()
-            button._dkforceModernButtonHighlight = highlight
-
-            button:HookScript("OnEnter", function(self)
-                if self._dkforceModernActive then self._dkforceModernButtonHighlight:Show() end
-            end)
-            button:HookScript("OnLeave", function(self)
-                if self._dkforceModernActive then self._dkforceModernButtonHighlight:Hide() end
-            end)
-            button:HookScript("OnMouseDown", function(self)
-                if self._dkforceModernActive and self._dkforceThemePalette then
-                    local p = self._dkforceThemePalette
-                    self._dkforceModernButtonBackground:SetVertexColor(
-                        p.accent[1] * 0.42, p.accent[2] * 0.42, p.accent[3] * 0.42, 1)
-                end
-            end)
-            button:HookScript("OnMouseUp", function(self)
-                if self._dkforceModernActive and self._dkforceThemePalette then
-                    local p = self._dkforceThemePalette
-                    self._dkforceModernButtonBackground:SetVertexColor(
-                        p.control[1], p.control[2], p.control[3], 1)
-                end
-            end)
         end
-        -- Classic is the only remaining look, so this always resolves to the
-        -- stock-button reset path.
-        button._dkforceModernActive = false
-        button._dkforceThemePalette = nil
-        button._dkforceModernButtonBackground:Hide()
-        button._dkforceModernButtonHighlight:Hide()
         for _, entry in ipairs(button._dkforceOriginalButtonTextures or {}) do
             entry.texture:SetAlpha(entry.alpha)
         end
@@ -983,7 +849,7 @@ function addon:CreateConfigPanel(standalone)
         end
     end
 
-    local function SetSliderSkin(slider, modern, palette)
+    local function SetSliderSkin(slider)
         if not slider or slider:GetObjectType() ~= "Slider" then return end
         if not slider._dkforceOriginalTextures then
             slider._dkforceOriginalTextures = {}
@@ -1002,25 +868,6 @@ function addon:CreateConfigPanel(standalone)
                 }
             end
         end
-        if not slider._dkforceModernTrack then
-            local track = slider:CreateTexture(nil, "BACKGROUND")
-            track:SetColorTexture(0.10, 0.18, 0.24, 1)
-            track:SetHeight(4)
-            track:SetPoint("LEFT", slider, "LEFT", 2, 0)
-            track:SetPoint("RIGHT", slider, "RIGHT", -2, 0)
-            track:Hide()
-            slider._dkforceModernTrack = track
-            local fill = slider:CreateTexture(nil, "BORDER")
-            fill:SetColorTexture(0.16, 0.62, 0.90, 1)
-            fill:SetHeight(4)
-            fill:SetPoint("LEFT", slider, "LEFT", 2, 0)
-            fill:Hide()
-            slider._dkforceModernFill = fill
-        end
-        -- Classic is the only remaining look, so this always resolves to the
-        -- stock-slider reset path.
-        slider._dkforceModernTrack:Hide()
-        slider._dkforceModernFill:Hide()
         for _, texture in ipairs(slider._dkforceOriginalTextures) do texture:Show() end
         local saved = slider._dkforceOriginalThumb
         if saved and saved.texture then
@@ -1035,7 +882,7 @@ function addon:CreateConfigPanel(standalone)
         end
     end
 
-    local function SetEditBoxSkin(edit, modern, palette)
+    local function SetEditBoxSkin(edit)
         if not edit or edit:GetObjectType() ~= "EditBox" then return end
         if not edit._dkforceOriginalTextures then
             edit._dkforceOriginalTextures = {}
@@ -1045,32 +892,12 @@ function addon:CreateConfigPanel(standalone)
                 end
             end
         end
-        if not edit._dkforceModernBackground then
-            local bg = edit:CreateTexture(nil, "BACKGROUND")
-            bg:SetPoint("TOPLEFT", edit, "TOPLEFT", -3, 2)
-            bg:SetPoint("BOTTOMRIGHT", edit, "BOTTOMRIGHT", 3, -2)
-            bg:SetColorTexture(0.035, 0.075, 0.105, 1)
-            bg:Hide()
-            edit._dkforceModernBackground = bg
-            local border = edit:CreateTexture(nil, "BORDER")
-            border:SetPoint("TOPLEFT", bg, "TOPLEFT", -1, 1)
-            border:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", 1, -1)
-            border:SetColorTexture(0.18, 0.36, 0.48, 1)
-            bg:SetDrawLayer("BACKGROUND", 1)
-            border:SetDrawLayer("BACKGROUND", 0)
-            border:Hide()
-            edit._dkforceModernBorder = border
-        end
-        -- Classic is the only remaining look, so this always resolves to the
-        -- stock-edit-box reset path.
-        edit._dkforceModernBorder:Hide()
-        edit._dkforceModernBackground:Hide()
         for _, texture in ipairs(edit._dkforceOriginalTextures) do texture:Show() end
         edit:SetTextColor(1, 1, 1, 1)
     end
 
-    -- Classic is the only remaining look. This function is kept (rather than
-    -- inlined at its call sites) purely so those sites stay unchanged.
+    -- Classic is the only look DK Force ships.  This applies the window and
+    -- card colors and restores the stock chrome on every control it walks.
     function panel:ApplyStandaloneTheme()
         if not standalone then return end
         local window = self:GetParent()
@@ -1097,7 +924,6 @@ function addon:CreateConfigPanel(standalone)
                 if pushed then pushed:Show() end
                 if highlight then highlight:Show() end
             end
-            if window.dkforceModernCloseText then window.dkforceModernCloseText:Hide() end
         end
         title:SetText("|cffcc0000DK Force|r")
         subtitle:SetTextColor(0.67, 0.67, 0.67, 1)
@@ -1131,9 +957,6 @@ function addon:CreateConfigPanel(standalone)
                 end
             end
         end
-        for _, dropdown in ipairs(self.dkforceModernDropdowns or {}) do
-            dropdown:SetModernMode(false)
-        end
     end
 
     testButton:SetScript("OnClick", function()
@@ -1145,11 +968,11 @@ function addon:CreateConfigPanel(standalone)
             elseif selectedKey == "suddendoom" then
                 addon:TestSuddenDoomGlow("deathCoil")
                 addon:TestSuddenDoomGlow("epidemic")
-            elseif selectedKey == "blooddnd" then addon:TestBloodDnDReminder()
-            elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow() end
+            elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
+            elseif selectedKey == "blightfall" then addon:TestBlightfallTracker() end
             testButton:SetText("Stop Test")
         else
-            addon:StopAll(); addon:StopBloodDnDReminder(); addon:StopDnDMissingGlow()
+            addon:StopAll(); addon:StopDnDMissingGlow(); addon:StopBlightfallTest()
             testButton:SetText("Test")
         end
     end)
@@ -1165,15 +988,12 @@ function addon:CreateConfigPanel(standalone)
     panel:SetScript("OnHide", function()
         StopPreview(activePage)
         testActive = false; testButton:SetText("Test")
-        for _, dropdown in ipairs(panel.dkforceModernDropdowns or {}) do
-            if dropdown.menu then dropdown.menu:Hide() end
-        end
+        addon:StopBlightfallTest()
     end)
     panel:SetScript("OnSizeChanged", function()
         if panel:IsShown() then LayoutPages() end
     end)
 
     for _, page in pairs(pages) do page:Hide() end
-    activeStandalonePanel = nil
     return panel
 end
