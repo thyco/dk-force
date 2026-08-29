@@ -34,7 +34,8 @@ local scourgeTesting = false
 -- the Lesser Ghoul icon going hidden/shown for a tick, toggling the whole
 -- reminder off and on.  `defends` counts the first, `flips` the second.
 local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0,
-                iconSwaps = 0, tickFixes = 0, vertexColors = 0, overlays = {} }
+                iconSwaps = 0, tickFixes = 0, vertexColors = 0, overlays = {},
+                frameFixes = 0, frames = 0 }
 
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
@@ -394,7 +395,9 @@ function addon:PrintScourgeDimDiagnostic()
                 stats.viaSetTexture or 0, stats.viaSetAtlas or 0, stats.viaSetTexCoord or 0))
     print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
     print(("  icon swaps (button replaced its texture): %d"):format(stats.iconSwaps))
-    print(("  tick fixes (grey lost with NO hook firing): %d"):format(stats.tickFixes))
+    print(("  tick fixes (grey lost, sampled at 10Hz): %d"):format(stats.tickFixes))
+    print(("  FRAME fixes (grey lost, sampled every frame): %d over %d frames")
+        :format(stats.frameFixes, stats.frames))
     print(("  vertex tints applied over the grey: %d   last: %s")
         :format(stats.vertexColors, stats.lastVertex or "none"))
     local seen = false
@@ -413,6 +416,34 @@ function addon:ResetScourgeDimDiagnostic()
     stats.iconSwaps, stats.tickFixes = 0, 0
     stats.vertexColors, stats.lastVertex = 0, nil
     stats.overlays = {}
+    stats.frameFixes, stats.frames = 0, 0
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
+
+-- Everything above samples on the ghoul watcher's 10Hz tick, and that is very
+-- likely why every counter reads zero while the flash is plainly visible: a
+-- one-or-two-frame flash lasts about 30ms, so a 100ms sampler misses it most of
+-- the time.  `tickFixes: 2` is not "the grey held" -- it is "I looked too slowly
+-- to see it go".  A 10Hz re-assert is equally too slow to PREVENT a sub-tick
+-- flash, which is the other half of the same mistake.
+--
+-- So re-assert every frame while dimmed.  This measures at full rate and closes
+-- the window to under one frame at the same time.  It runs only while the
+-- reminder is actually showing, over the two or three icons it tracks.
+local frameWatcher = CreateFrame("Frame")
+frameWatcher:SetScript("OnUpdate", function()
+    if not (scourgeDimmed or scourgeTesting) then return end
+    stats.frames = stats.frames + 1
+    for _, icons in ipairs({ scourgeIcons, cdmScourgeIcons }) do
+        for _, icon in pairs(icons) do
+            if icon and icon.IsDesaturated then
+                local ok, isDesaturated = pcall(icon.IsDesaturated, icon)
+                if ok and isDesaturated == false then
+                    stats.frameFixes = stats.frameFixes + 1
+                    SetIconDesaturated(icon, true)
+                end
+            end
+        end
+    end
+end)
