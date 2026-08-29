@@ -79,6 +79,24 @@ local function AttachDimTexture(frame, icon)
     -- narrower anchor stands: it is the conservative one, and it is what the
     -- Cooldown Manager skins with oversized containers need.
     if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
+    -- Inherit the icon's masks.  This is what every earlier attempt missed:
+    -- /dkf icon showed the copy and the icon sharing texture, size, layer and
+    -- texture coordinates exactly, so the visible difference could not be any of
+    -- them.  Blizzard's action buttons apply a MaskTexture to round the icon's
+    -- corners -- the flat modern look -- and that is what clips away the raised
+    -- bevel painted into every Interface\\Icons file.  SetAllPoints copies
+    -- geometry, not masks, so the copy was the raw square art, bevel included.
+    --
+    -- A MaskTexture is not a Texture, so it never appeared in the dump either,
+    -- which is why the numbers all matched while the buttons plainly did not.
+    if icon and icon.GetNumMaskTextures and tex.AddMaskTexture then
+        local okCount, count = pcall(icon.GetNumMaskTextures, icon)
+        for index = 1, (okCount and count or 0) do
+            local okMask, mask = pcall(icon.GetMaskTexture, icon, index)
+            if okMask and mask then pcall(tex.AddMaskTexture, tex, mask) end
+        end
+    end
+
     tex:SetDesaturated(true)
     tex:Hide()
     frame._dkfDimTexture = tex
@@ -289,8 +307,13 @@ local function Describe(region, mine)
     end
     local coords = "?"
     if region.GetTexCoord then
-        local ok, a, b, c, d = pcall(region.GetTexCoord, region)
-        if ok and a then coords = string.format("%.3f %.3f %.3f %.3f", a, b, c, d) end
+        -- All eight returns: printing the first four showed ULx,ULy,LLx,LLy and
+        -- made every texture read as uncropped regardless of its real crop.
+        local ok, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = pcall(region.GetTexCoord, region)
+        if ok and ULx then
+            coords = string.format("%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f",
+                ULx, ULy, LLx, LLy, URx, URy, LRx, LRy)
+        end
     end
     local alpha, shown, desaturated = "?", "?", "?"
     if region.GetAlpha then
@@ -306,8 +329,13 @@ local function Describe(region, mine)
         if ok then desaturated = tostring(value) end
     end
 
-    print(("%s%s %s.%s  %.0fx%.0f  shown=%s alpha=%s desat=%s")
-        :format(mine and "|cff00ff00>> OURS|r " or "   ", kind, layer, sublevel, w, h, shown, alpha, desaturated))
+    local masks = "?"
+    if region.GetNumMaskTextures then
+        local ok, count = pcall(region.GetNumMaskTextures, region)
+        if ok then masks = tostring(count) end
+    end
+    print(("%s%s %s.%s  %.0fx%.0f  shown=%s alpha=%s desat=%s masks=%s")
+        :format(mine and "|cff00ff00>> OURS|r " or "   ", kind, layer, sublevel, w, h, shown, alpha, desaturated, masks))
     print(("      texcoord %s   texture %s"):format(coords, texture))
 end
 
