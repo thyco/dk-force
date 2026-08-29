@@ -65,31 +65,57 @@ local function SetIconDesaturated(icon, value)
     return 1
 end
 
--- Re-asserting on the watcher's 10Hz tick alone is not enough, and the gap is
--- visible: Blizzard's action buttons re-check range on a 0.2s ticker and call
--- SetDesaturated from the result, so the icon sat in full colour for up to a
--- tenth of a second, twice a second.  That reads as a flicker.
+-- Re-asserting on the watcher's 10Hz tick alone leaves up to a tenth of a
+-- second of full colour after anything clears the grey.  That reads as a
+-- flicker, so the grey goes back in the same call that cleared it.
 --
--- So put the grey back in the same call that cleared it, leaving no frame in
--- between.  Hooking the icon's own SetDesaturated rather than the button's
--- update function -- which is what GreyOnCooldown hooks -- means this holds
--- whoever repaints it, Blizzard or ElvUI or Masque or a border addon, without
--- needing to know which update path each one uses.
+-- Hooking the icon rather than the button's update function -- which is what
+-- GreyOnCooldown hooks -- means this holds whoever repaints it, Blizzard or
+-- ElvUI or Masque or a border addon, without knowing their update paths.
+--
+-- SetDesaturated is not the only way the grey is lost, and on this UI it was
+-- not the way at all: /dkf dim reported zero defends against one flip while
+-- the icon was visibly flickering.  Repainting a texture clears its
+-- desaturation as a side effect, so a button update that re-sets the icon art
+-- wipes the grey through a path no SetDesaturated hook can ever see.  Hook the
+-- repaint calls too, and count them separately so the report names the culprit
+-- instead of leaving the next round of this to guesswork.
+local REPAINT_METHODS = { "SetTexture", "SetAtlas", "SetTexCoord" }
+
 local function HookIcon(icon)
     if not icon or icon._dkfDesaturationHooked then return end
     icon._dkfDesaturationHooked = true
-    local ok = pcall(hooksecurefunc, icon, "SetDesaturated", function(self, value)
-        -- `value` truthy means someone just set the grey we want anyway, and
-        -- the guard keeps our own writes from re-entering.
-        if applyingDesaturation or value then return end
+    local installed = 0
+
+    local function Reassert(self, counter)
+        -- The guard keeps our own writes from re-entering.
+        if applyingDesaturation then return end
         if not (scourgeDimmed or scourgeTesting) then return end
         -- Only defend icons still tracked: a button that dropped out of the
         -- last scan keeps its hook, and must not be forced grey by it.
         if not self._dkfScourgeTracked then return end
         stats.defends = stats.defends + 1
+        stats[counter] = (stats[counter] or 0) + 1
         SetIconDesaturated(self, true)
+    end
+
+    -- `value` truthy means someone just set the grey we want anyway.
+    local ok = pcall(hooksecurefunc, icon, "SetDesaturated", function(self, value)
+        if value then return end
+        Reassert(self, "viaSetDesaturated")
     end)
-    if ok then
+    if ok then installed = installed + 1 end
+
+    for _, method in ipairs(REPAINT_METHODS) do
+        if icon[method] then
+            local hooked = pcall(hooksecurefunc, icon, method, function(self)
+                Reassert(self, "via" .. method)
+            end)
+            if hooked then installed = installed + 1 end
+        end
+    end
+
+    if installed > 0 then
         stats.hooked = stats.hooked + 1
     else
         stats.hookFailed = stats.hookFailed + 1
@@ -236,11 +262,18 @@ function addon:PrintScourgeDimDiagnostic()
     print(("  icons tracked: %d on bars, %d in Cooldown Manager"):format(bars, cdm))
     print(("  hooks installed: %d   failed: %d"):format(stats.hooked, stats.hookFailed))
     print(("  defends (repaint cleared the grey): %d"):format(stats.defends))
+    -- Which call is wiping the grey.  Names the culprit outright rather than
+    -- leaving the next round of this to guesswork.
+    print(("    via SetDesaturated %d, SetTexture %d, SetAtlas %d, SetTexCoord %d")
+        :format(stats.viaSetDesaturated or 0, stats.viaSetTexture or 0,
+                stats.viaSetAtlas or 0, stats.viaSetTexCoord or 0))
     print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
 function addon:ResetScourgeDimDiagnostic()
     stats.defends, stats.flips, stats.releases = 0, 0, 0
+    stats.viaSetDesaturated, stats.viaSetTexture = 0, 0
+    stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
