@@ -236,11 +236,17 @@ end
 -- call it.  `frameShown` is nil when no Lesser Ghoul icon has been registered,
 -- which is not the same as a registered icon that is hidden: the first means
 -- nothing is known, the second means the buff is gone.
+--
+-- Only the glow is gated on combat.  A glow is an interrupt -- it demands
+-- attention now -- so out of combat it would be noise, which is why every glow
+-- in this addon is combat-only.  The desaturation is the opposite: it makes a
+-- button quieter, and reads as a standing "not this one" rather than an alarm,
+-- so it is useful while setting up as well as mid-fight.
 function addon:EvaluateGhoulState(settings, frameShown, inCombat)
-    if not (settings and settings.enabled and inCombat) then return false, false end
+    if not (settings and settings.enabled) then return false, false end
     if frameShown == nil then return false, false end
     local missing = not frameShown
-    return (settings.lesserGhoulGlow and missing) or false,
+    return (inCombat and settings.lesserGhoulGlow and missing) or false,
            (settings.lesserGhoulDim and missing) or false
 end
 

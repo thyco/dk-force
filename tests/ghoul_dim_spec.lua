@@ -106,10 +106,18 @@ glow, dim = addon:EvaluateGhoulState(dimOnly, false, true)
 check("desaturation only: no glow", glow, false)
 check("desaturation only: desaturates", dim, true)
 
--- 5. Out of combat: silent however long the ghoul is gone.
+-- 5. Out of combat the two reminders diverge, and this is the only case where
+--    they do.  The glow is an interrupt and stays combat-only like every other
+--    glow here; the desaturation is a standing cue and holds while setting up.
 glow, dim = addon:EvaluateGhoulState(both, false, false)
 check("out of combat: no glow", glow, false)
-check("out of combat: no desaturation", dim, false)
+check("out of combat: still desaturates", dim, true)
+
+-- 5b. Out of combat with the ghoul up: nothing, so the standing cue really is
+--     tracking the buff rather than just being permanently on.
+glow, dim = addon:EvaluateGhoulState(both, true, false)
+check("out of combat, ghoul present: no glow", glow, false)
+check("out of combat, ghoul present: no desaturation", dim, false)
 
 -- 6. Feature disabled outright: silent, both toggles notwithstanding.
 glow, dim = addon:EvaluateGhoulState(off, false, true)
