@@ -1,3 +1,11 @@
+-- Core.lua is the shared core the feature modules build on, not the whole
+-- addon. It owns the spell data (addon.SPELLS), the DB defaults
+-- (addon.DEFAULT_DB), the specialization helpers, the public Cooldown
+-- Manager rescan entry points, addon:StopAll, and the castFrame event
+-- dispatcher that fans cast/combat/talent events out to the feature modules.
+-- It also handles the welcome popup, DB initialisation on PLAYER_LOGIN, and
+-- the /dkf slash commands. Each feature (Festering, Sudden Doom, Blightfall,
+-- Blood D&D, glow helpers) lives in its own file.
 local addonName, addon = ...
 DKForce = addon
 
@@ -139,7 +147,6 @@ end
 function addon:IsUnholySpec()
     return self:GetActiveSpecID() == 252
 end
-
 
 -- Keep the public rescan functions used by the settings button, slash command,
 -- and retry loop. CDMHook owns discovery through Blizzard's item API.
