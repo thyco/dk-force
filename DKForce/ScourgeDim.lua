@@ -74,26 +74,11 @@ local function AttachDimTexture(frame, icon)
 
     local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, math.min(sublevel + 1, 7))
     if not (ok and tex) then return nil end
-    -- Cover the BUTTON's rect, not the icon's, so the copy occupies the area
-    -- the frame art is cut around and its corners are treated the same as the
-    -- real icon's.  Anchoring to the icon left the corner cut-outs dark on the
-    -- greyed button while the normal one showed art in them.
-    --
-    -- Only when the icon effectively fills the button, though: some Cooldown
-    -- Manager skins wrap a small icon in a much larger container, and taking
-    -- that container's rect would stretch the grey across the whole thing --
-    -- the same trap CreateOverlay documents for glows.  Unknown sizes fall back
-    -- to the icon, which is always the conservative choice.
-    local fw, fh = frame:GetSize()
-    local iw, ih = icon and icon:GetSize()
-    if icon and fw and fh and iw and ih and fw > 0 and fh > 0
-        and iw / fw > 0.85 and ih / fh > 0.85 then
-        tex:SetAllPoints(frame)
-    elseif icon then
-        tex:SetAllPoints(icon)
-    else
-        tex:SetAllPoints(frame)
-    end
+    -- Anchored to the icon, not the button.  Covering the button's rect was
+    -- tried to make the corner cut-outs match and changed nothing, so the
+    -- narrower anchor stands: it is the conservative one, and it is what the
+    -- Cooldown Manager skins with oversized containers need.
+    if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
     tex:SetDesaturated(true)
     tex:Hide()
     frame._dkfDimTexture = tex
