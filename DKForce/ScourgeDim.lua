@@ -33,7 +33,8 @@ local scourgeTesting = false
 -- clearing the grey faster than it is put back, or the DETECTION is blinking --
 -- the Lesser Ghoul icon going hidden/shown for a tick, toggling the whole
 -- reminder off and on.  `defends` counts the first, `flips` the second.
-local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0 }
+local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0,
+                iconSwaps = 0, tickFixes = 0 }
 
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
@@ -152,13 +153,39 @@ local function UntrackIcons(icons)
     end
 end
 
--- Applied to every tracked icon rather than only on a state change, because
--- Blizzard's usable-state updates clear the desaturation whenever they run.
-local function ApplyAll(value)
+-- Applied to every tracked icon rather than only on a state change, because a
+-- repaint clears the desaturation whenever it runs.
+--
+-- Re-resolves the frame's icon each pass as well.  Every hook is attached to a
+-- texture OBJECT, so if a button swaps in a different texture the hooks stay
+-- bound to one nothing draws any more and the grey is lost with no hook firing
+-- -- which matches a flicker that appears only in combat, when buttons update
+-- hardest.  `iconSwaps` counts it and the re-resolve repairs it; `tickFixes`
+-- counts the grey being found already lost, meaning no hook caught the clear.
+local function ApplyToTable(icons, value)
     local applied = 0
-    for _, icon in pairs(scourgeIcons)    do applied = applied + SetIconDesaturated(icon, value) end
-    for _, icon in pairs(cdmScourgeIcons) do applied = applied + SetIconDesaturated(icon, value) end
+    for frame, icon in pairs(icons) do
+        local target = icon
+        local live = GetIconTexture(frame)
+        if live and live ~= icon then
+            stats.iconSwaps = stats.iconSwaps + 1
+            if icon then icon._dkfScourgeTracked = nil end
+            -- Assigning to a key that already exists is safe mid-pairs.
+            icons[frame] = live
+            TrackIcon(live)
+            target = live
+        end
+        if value and target and target.IsDesaturated then
+            local ok, isDesaturated = pcall(target.IsDesaturated, target)
+            if ok and isDesaturated == false then stats.tickFixes = stats.tickFixes + 1 end
+        end
+        applied = applied + SetIconDesaturated(target, value)
+    end
     return applied
+end
+
+local function ApplyAll(value)
+    return ApplyToTable(scourgeIcons, value) + ApplyToTable(cdmScourgeIcons, value)
 end
 
 -- Called from the ghoul watcher every 0.1s.  While dimmed this re-asserts every
@@ -285,6 +312,8 @@ function addon:PrintScourgeDimDiagnostic()
         :format(stats.viaSetDesaturated or 0, stats.viaSetDesaturation or 0,
                 stats.viaSetTexture or 0, stats.viaSetAtlas or 0, stats.viaSetTexCoord or 0))
     print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
+    print(("  icon swaps (button replaced its texture): %d"):format(stats.iconSwaps))
+    print(("  tick fixes (grey lost with NO hook firing): %d"):format(stats.tickFixes))
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
@@ -292,6 +321,7 @@ function addon:ResetScourgeDimDiagnostic()
     stats.defends, stats.flips, stats.releases = 0, 0, 0
     stats.viaSetDesaturated, stats.viaSetDesaturation = 0, 0
     stats.viaSetTexture = 0
+    stats.iconSwaps, stats.tickFixes = 0, 0
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
