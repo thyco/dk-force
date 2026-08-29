@@ -61,85 +61,33 @@ addon.SPELLS = {
     GRAVEYARD = { id = 383269, name = "Graveyard", key = "epidemic" },
 }
 
+-- One glow style: Blizzard's current action-bar proc glow, start flash and all.
+-- The list and the lookup below are kept because `GetGlowTypeByID` is called
+-- from ~18 sites, including the byte-protected Stand In Death and Decay
+-- subsystem.  Collapsing the table while preserving its shape leaves every one
+-- of those callers untouched.
 addon.GLOW_TYPES = {
     {
-        id = "pixel",
-        name = "Pixel Glow",
-        description = "Rotating pixel lines around the button",
-        start = function(frame, opts)
-            if LCG and LCG.PixelGlow_Start then
-                LCG.PixelGlow_Start(frame,
-                    {opts.color.r, opts.color.g, opts.color.b, opts.alpha},
-                    opts.lines or 8, opts.speed or 0.25, opts.length,
-                    opts.thickness or 2, 0, 0, opts.border, "DKForce")
-            end
-        end,
-        stop = function(frame)
-            if LCG and LCG.PixelGlow_Stop then LCG.PixelGlow_Stop(frame, "DKForce") end
-        end,
-    },
-    {
-        id = "autocast",
-        name = "Autocast Shine",
-        description = "Sparkling particles at corners",
-        start = function(frame, opts)
-            if LCG and LCG.AutoCastGlow_Start then
-                LCG.AutoCastGlow_Start(frame,
-                    {opts.color.r, opts.color.g, opts.color.b, opts.alpha},
-                    opts.particles or 4, opts.speed or 0.125, opts.scale or 1,
-                    0, 0, "DKForce")
-            end
-        end,
-        stop = function(frame)
-            if LCG and LCG.AutoCastGlow_Stop then LCG.AutoCastGlow_Stop(frame, "DKForce") end
-        end,
-    },
-    {
-        id = "button",
-        name = "Button Glow",
-        description = "Classic WoW proc glow overlay",
-        start = function(frame, opts)
-            if LCG and LCG.ButtonGlow_Start then
-                LCG.ButtonGlow_Start(frame,
-                    {opts.color.r, opts.color.g, opts.color.b, opts.alpha},
-                    opts.speed or 0.5)
-            end
-        end,
-        stop = function(frame)
-            if LCG and LCG.ButtonGlow_Stop then LCG.ButtonGlow_Stop(frame) end
-        end,
-    },
-    {
-        id = "buttonnative",
-        name = "Native Button Glow",
-        description = "Blizzard's proc glow with its own colour",
-        -- Passing no colour is the whole point.  ButtonGlow_Start desaturates
-        -- its textures and tints them whenever a colour is supplied, which is
-        -- what every other style here does; with nil it leaves the Blizzard
-        -- artwork untouched, so this is the only way to get the authentic gold
-        -- rather than a flat wash of it.  Nothing else is configurable: the
-        -- library normalises alpha back to native on this path too.
-        start = function(frame, opts)
-            if LCG and LCG.ButtonGlow_Start then LCG.ButtonGlow_Start(frame, nil) end
-        end,
-        stop = function(frame)
-            if LCG and LCG.ButtonGlow_Stop then LCG.ButtonGlow_Stop(frame) end
-        end,
-    },
-    {
         id = "proc",
-        name = "Proc Border",
-        description = "Animated glowing border",
+        name = "Proc Glow",
+        description = "Blizzard's action-bar proc glow",
+        -- `startAnim` plays the start flipbook and hands off to the loop on its
+        -- OnFinished, which is the flash-then-circle the stock glow has; the
+        -- old call passed false and skipped straight to the loop.  A nil colour
+        -- leaves the Blizzard artwork alone, while any colour desaturates the
+        -- texture and tints it -- so nil is the only way to get the real thing.
         start = function(frame, opts)
-            if LCG and LCG.ProcGlow_Start then
-                LCG.ProcGlow_Start(frame, {
-                    key = "DKForce",
-                    color = {opts.color.r, opts.color.g, opts.color.b, opts.alpha},
-                    frequency = opts.speed or 0.25,
-                    thickness = opts.thickness or 2,
-                    startAnim = false,
-                })
+            if not (LCG and LCG.ProcGlow_Start) then return end
+            local color
+            if not opts.nativeColor then
+                local c = opts.color
+                color = { c.r, c.g, c.b, 1 }
             end
+            LCG.ProcGlow_Start(frame, {
+                key = "DKForce",
+                color = color,
+                startAnim = true,
+            })
         end,
         stop = function(frame)
             if LCG and LCG.ProcGlow_Stop then LCG.ProcGlow_Stop(frame, "DKForce") end
@@ -154,15 +102,13 @@ end
 
 local DEFAULT_GLOW_SETTINGS = {
     enabled    = true,
-    glowType   = "pixel",
+    -- Colour is the only glow setting.  `nativeColor` means "send no colour to
+    -- the library", which is the sole way to get Blizzard's own artwork rather
+    -- than a desaturated copy of it tinted back toward gold.  It is a flag and
+    -- not simply a nil `color` because the DEFAULT_DB merge reinstates missing
+    -- keys, and every `settings.color.r` read would then error.
+    nativeColor = true,
     color      = {r = 0.0, g = 0.9, b = 0.2},
-    alpha      = 1.0,
-    speed      = 0.25,
-    lines      = 8,
-    thickness  = 2,
-    particles  = 4,
-    scale      = 1.0,
-    border     = false,
     glowTiming = 5,
     -- When entering combat without the Festering Scythe buff, remind the
     -- player after this optional grace period.
@@ -188,16 +134,9 @@ addon.DEFAULT_DB = {
     suddenDoomGlow = CopyTable(DEFAULT_GLOW_SETTINGS),
     -- Glow while you are standing outside your own Death and Decay.
     bloodDndMissing = {
-        enabled   = false,
-        glowType  = "pixel",
-        color     = {r = 1.00, g = 0.20, b = 0.20},
-        alpha     = 1.0,
-        speed     = 0.25,
-        lines     = 8,
-        thickness = 2,
-        particles = 4,
-        scale     = 1.0,
-        border    = false,
+        enabled     = false,
+        nativeColor = true,
+        color       = {r = 1.00, g = 0.20, b = 0.20},
     },
     -- Unholy chain prompt.  The movable icon is the only display DK Force
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
@@ -222,15 +161,14 @@ addon.DEFAULT_DB = {
         -- sets no key, so the DEFAULT_DB merge loop would never iterate it.
         -- The drag handler creates it on first use.
         fontSize        = 18,
-        glowType        = "button",
+        nativeColor     = true,
         color           = { r = 0.72, g = 0.40, b = 1.00 },
-        speed           = 0.25,
-        lines           = 8,
-        thickness       = 2,
-        alpha           = 1.00,
     },
 }
 
+-- The `or` fallback is why removing the other styles needs no migration: a
+-- SavedVariables `glowType` of "pixel" or "button" simply resolves to the one
+-- remaining style instead of nil.
 function addon:GetGlowTypeByID(id)
     return addon.GLOW_TYPE_MAP[id] or addon.GLOW_TYPES[1]
 end

@@ -182,7 +182,11 @@ local function CreateSlider(parent, labelText, x, y, width, minValue, maxValue, 
     return holder
 end
 
-local function CreateColorControl(parent, x, y, labelText, colorProvider, changed)
+-- Blizzard's own proc-glow gold, shown in the swatch while the native colour
+-- is selected.  Display only -- the library is sent no colour at all.
+local NATIVE_SWATCH_COLOR = { 1.00, 0.82, 0.00 }
+
+local function CreateColorControl(parent, x, y, labelText, settingsProvider, changed)
     local label = CreateText(parent, labelText, x, y, "GameFontNormal")
     local swatch = CreateFrame("Button", nil, parent)
     swatch:SetSize(25, 25)
@@ -195,18 +199,30 @@ local function CreateColorControl(parent, x, y, labelText, colorProvider, change
     swatch.color:SetPoint("BOTTOMRIGHT", -2, 2)
     local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hint:SetPoint("LEFT", swatch, "RIGHT", 6, 0)
-    hint:SetText("(click to change)")
     hint:SetTextColor(0.6, 0.6, 0.6)
     swatch.refresh = function()
-        local color = colorProvider()
-        swatch.color:SetColorTexture(color.r, color.g, color.b, 1)
+        local settings = settingsProvider()
+        -- Native sends no colour to the library, so there is no stored value to
+        -- show.  Painting the gold makes the state visible instead of leaving a
+        -- stale custom colour sitting in a swatch that no longer applies.
+        if settings.nativeColor then
+            swatch.color:SetColorTexture(NATIVE_SWATCH_COLOR[1], NATIVE_SWATCH_COLOR[2], NATIVE_SWATCH_COLOR[3], 1)
+            hint:SetText("(Blizzard default)")
+        else
+            local color = settings.color
+            swatch.color:SetColorTexture(color.r, color.g, color.b, 1)
+            hint:SetText("(click to change)")
+        end
     end
     swatch:SetScript("OnClick", function()
-        local color = colorProvider()
+        local settings = settingsProvider()
+        local color = settings.color
         ColorPickerFrame:SetupColorPickerAndShow({
             r = color.r, g = color.g, b = color.b,
             swatchFunc = function()
                 color.r, color.g, color.b = ColorPickerFrame:GetColorRGB()
+                -- Choosing a colour is what turns native off.
+                settings.nativeColor = false
                 swatch.refresh()
                 changed()
             end,
@@ -218,8 +234,7 @@ local function CreateColorControl(parent, x, y, labelText, colorProvider, change
         })
     end)
     -- The label and hint are separate regions parented to the card, so hiding
-    -- the swatch alone would strand them.  Styles that take no colour hide the
-    -- whole group through this.
+    -- the swatch alone would strand them.
     swatch.pieces = { label, swatch, hint }
     return swatch
 end
@@ -241,14 +256,15 @@ end
 
 local function CreatePresetRow(parent, x, y, settingsProvider, changed)
     local label = CreateText(parent, "Presets:", x, y, "GameFontNormal")
-    local buttons = {}
+    local pieces = { label }
+    local previous
     for index, preset in ipairs(PRESETS) do
         local button = CreateFrame("Button", nil, parent)
         button:SetSize(34, 18)
         if index == 1 then
             button:SetPoint("LEFT", label, "RIGHT", 8, 0)
         else
-            button:SetPoint("LEFT", buttons[index - 1], "RIGHT", 4, 0)
+            button:SetPoint("LEFT", previous, "RIGHT", 4, 0)
         end
         local border = button:CreateTexture(nil, "BACKGROUND")
         border:SetAllPoints()
@@ -260,19 +276,38 @@ local function CreatePresetRow(parent, x, y, settingsProvider, changed)
         button:SetScript("OnClick", function()
             local settings = settingsProvider()
             settings.color.r, settings.color.g, settings.color.b = preset[1], preset[2], preset[3]
+            -- Picking any real colour is what leaves native behind.
+            settings.nativeColor = false
             changed()
         end)
-        buttons[index] = button
+        previous = button
+        pieces[#pieces + 1] = button
     end
-    -- Returned as one hideable group, label included, for the same reason as
-    -- CreateColorControl.pieces.  Callers that only place the row ignore this.
-    buttons[#buttons + 1] = label
-    return buttons
-end
 
-local function SetPiecesShown(pieces, shown)
-    if not pieces then return end
-    for _, region in ipairs(pieces) do region:SetShown(shown) end
+    -- The seventh swatch is the "no colour at all" one: it sends nothing to the
+    -- library, which is the only way to get Blizzard's own artwork rather than a
+    -- desaturated copy tinted back toward gold.  Labelled rather than filled,
+    -- because it is a mode and not a colour.
+    local native = CreateFrame("Button", nil, parent)
+    native:SetSize(52, 18)
+    native:SetPoint("LEFT", previous, "RIGHT", 6, 0)
+    local nativeBorder = native:CreateTexture(nil, "BACKGROUND")
+    nativeBorder:SetAllPoints()
+    nativeBorder:SetColorTexture(0.35, 0.35, 0.35, 1)
+    local nativeFill = native:CreateTexture(nil, "ARTWORK")
+    nativeFill:SetPoint("TOPLEFT", 2, -2)
+    nativeFill:SetPoint("BOTTOMRIGHT", -2, 2)
+    nativeFill:SetColorTexture(0.10, 0.10, 0.12, 1)
+    native.text = native:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    native.text:SetPoint("CENTER", native, "CENTER", 0, 0)
+    native.text:SetText("Native")
+    native:SetScript("OnClick", function()
+        settingsProvider().nativeColor = true
+        changed()
+    end)
+    pieces[#pieces + 1] = native
+
+    return pieces
 end
 
 function addon:CreateConfigPanel(standalone)
@@ -457,63 +492,24 @@ function addon:CreateConfigPanel(standalone)
         if key == "blightfall" then return DKForceDB.blightfallChain end
     end
 
-    local function BuildAppearance(page, card, key, startY)
-        page.appearanceControls = {}
-        -- Pages that put their own controls above the glow sliders pass a
-        -- lower start position; everything else keeps the original -38.
-        local baseY = startY or -38
-        -- Leave enough room for the numeric edit box on the right.  The same
-        -- page is used both standalone and inside Blizzard's narrower AddOns
-        -- settings panel, so wide sliders can otherwise escape the card.
-        local appearanceWidth = key == "festering" and 190 or 250
+    -- Colour is the only glow setting left, so this is the whole appearance
+    -- card: a swatch and the preset row, including the Native entry.
+    local function BuildColorCard(page, card, key)
         local function settings() return GlowSettingsFor(key) end
         local function changed()
-            RefreshTracking(); RefreshPreview(page)
-        end
-        local controls = {
-            speed = CreateSlider(card, "Animation Speed", 14, -38, appearanceWidth, 0.05, 2, 0.05,
-                function() return settings().speed end, function(v) settings().speed = v; changed() end),
-            lines = CreateSlider(card, "Lines / Particles", 14, -88, appearanceWidth, 1, 16, 1,
-                function() return settings().lines end, function(v) settings().lines = v; changed() end),
-            thickness = CreateSlider(card, "Thickness", 14, -138, appearanceWidth, 1, 8, 1,
-                function() return settings().thickness end, function(v) settings().thickness = v; changed() end),
-            alpha = CreateSlider(card, "Opacity", 14, -188, appearanceWidth, 0.1, 1, 0.05,
-                function() return settings().alpha end, function(v) settings().alpha = v; changed() end),
-        }
-        page.appearanceControls = controls
-        -- Shown in place of the sliders for styles that expose nothing, so the
-        -- card explains itself instead of just looking empty.  The card is
-        -- anchored to fixed page corners, so hiding it would leave the same
-        -- hole anyway.
-        page.appearanceNote = CreateText(card,
-            "Blizzard's own proc glow, drawn exactly as the game draws it.  "
-            .. "Colour, speed and opacity are all fixed, so there is nothing to configure.",
-            14, baseY, "GameFontHighlightSmall", appearanceWidth, { 0.64, 0.64, 0.64 })
-        page.appearanceNote:Hide()
-        page.refreshAppearance = function()
-            local glowType = settings().glowType or "pixel"
-            local visible = glowType == "buttonnative" and {}
-                or glowType == "pixel" and { "speed", "lines", "thickness", "alpha" }
-                or (glowType == "autocast" or glowType == "button") and { "speed", "alpha" }
-                or { "alpha" }
-            local y = baseY
-            for _, control in pairs(controls) do control:Hide() end
-            for _, name in ipairs(visible) do
-                local control = controls[name]
-                control:ClearAllPoints()
-                control:SetPoint("TOPLEFT", card, "TOPLEFT", 14, y)
-                control:Show(); control.refresh()
-                y = y - 50
+            -- Festering rebuilds its overlays from the style rather than
+            -- re-reading them, so a colour change needs this or the live glow
+            -- keeps the old colour until the next proc.  BuildGlowPage used to
+            -- do it when the swatch lived on its settings card.
+            if key == "festering" and addon.RefreshFesteringGlowStyle then
+                addon:RefreshFesteringGlowStyle()
             end
-            -- The colour controls live on a different card on every page, so
-            -- they are reached through the page rather than captured here.
-            local native = glowType == "buttonnative"
-            page.appearanceNote:SetShown(native)
-            SetPiecesShown(page.colorSwatch and page.colorSwatch.pieces, not native)
-            SetPiecesShown(page.presetRow, not native)
-            local glowName = addon:GetGlowTypeByID(glowType).name
-            card.title:SetText(glowName .. " appearance")
+            RefreshTracking(); RefreshPreview(page)
+            page.colorSwatch.refresh()
         end
+        page.colorSwatch = CreateColorControl(card, 14, -38, "Glow Color:", settings, changed)
+        page.presetRow = CreatePresetRow(card, 14, -74, settings, changed)
+        page.refreshColor = function() page.colorSwatch.refresh() end
     end
 
     local function BuildGlowPage(key, titleText, spellID)
@@ -522,7 +518,7 @@ function addon:CreateConfigPanel(standalone)
         page.layoutKind = key == "festering" and "festering" or "glow"
         page.settingsCard = CreateCard(page, titleText)
         page.previewCard = CreateCard(page, "Live Preview")
-        page.appearanceCard = CreateCard(page, "Pixel Glow appearance")
+        page.appearanceCard = CreateCard(page, "Glow Colour")
         if key == "festering" or key == "deathcoil" or key == "epidemic" then
             page.warningCard = CreateCard(page, "Warning timing")
             page.ghoulCard = CreateCard(page, "Lesser Ghoul reminder")
@@ -552,38 +548,14 @@ function addon:CreateConfigPanel(standalone)
         -- Sudden Doom is enabled once from its dedicated page.  The Death
         -- Coil and Epidemic pages remain only for their individual styling.
         if key == "deathcoil" or key == "epidemic" then page.enable:Hide() end
-        local compactOffset = (key == "deathcoil" or key == "epidemic") and 36 or 0
-        local glowStyleLabel = CreateText(page.settingsCard, "Glow Style:", 14, -112 + compactOffset, "GameFontNormal")
-        page.glowDropdown = CreateDropdown(page.settingsCard, 0, 0, 145,
-            function()
-                local items = {}
-                for _, glowType in ipairs(addon.GLOW_TYPES) do
-                    items[#items + 1] = { text = glowType.name, value = glowType.id }
-                end
-                return items
-            end,
-            function() return settings().glowType end,
-            function(value)
-                settings().glowType = value
-                page.refreshAppearance()
-                changed()
-            end)
-        page.glowDropdown:ClearAllPoints()
-        page.glowDropdown:SetPoint("LEFT", glowStyleLabel, "RIGHT", -8, -2)
-        page.colorSwatch = CreateColorControl(page.settingsCard, 14, -149 + compactOffset, "Glow Color:",
-            function() return settings().color end, changed)
-        page.presetRow = CreatePresetRow(page.settingsCard, 14, -181 + compactOffset, settings, function()
-            page.colorSwatch.refresh(); changed()
-        end)
-
         page.previewIcon = CreatePreview(page.previewCard, spellID)
-        BuildAppearance(page, page.appearanceCard, key)
+        BuildColorCard(page, page.appearanceCard, key)
         if key == "blooddndmissing" then
             page.missingHint = CreateText(page.appearanceCard,
                 "Blood only, in combat.  Requires Death and Decay and its buff in the Cooldown "
                 .. "Manager: the buff icon is how the reminder knows you left your patch.  Waits "
                 .. "half a second so the Cleaving Strikes window does not flicker.",
-                14, -250, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+                14, -120, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
         end
 
         if key == "festering" then
@@ -610,8 +582,7 @@ function addon:CreateConfigPanel(standalone)
         page.refresh = function()
             page.selector.refresh()
             if key ~= "deathcoil" and key ~= "epidemic" then page.enable.refresh() end
-            page.glowDropdown.refresh(); page.colorSwatch.refresh()
-            page.refreshAppearance()
+            page.refreshColor()
             if page.timing then page.timing.refresh(); page.combat.refresh(); page.grace.refresh(); page.ghoul.refresh() end
             if page.threshold then page.threshold.refresh() end
             RefreshPreview(page)
@@ -624,7 +595,7 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "suddendoom"
         page.glowCard = CreateCard(page, "Sudden Doom Glow")
         page.previewCard = CreateCard(page, "Sudden Doom Preview")
-        page.appearanceCard = CreateCard(page, "Pixel Glow appearance")
+        page.appearanceCard = CreateCard(page, "Glow Colour")
         AddSelector(page, page.glowCard)
         local function settings() return DKForceDB.suddenDoomGlow end
         local function changed()
@@ -632,23 +603,12 @@ function addon:CreateConfigPanel(standalone)
         end
         page.enable = CreateCheck(page.glowCard, "Enable Sudden Doom glow", 14, -76,
             function() return settings().enabled end, function(v) settings().enabled = v; changed() end)
-        local styleLabel = CreateText(page.glowCard, "Glow Style:", 14, -112, "GameFontNormal")
-        page.glowDropdown = CreateDropdown(page.glowCard, 0, 0, 145,
-            function()
-                local items = {}; for _, glowType in ipairs(addon.GLOW_TYPES) do items[#items + 1] = { text = glowType.name, value = glowType.id } end
-                return items
-            end,
-            function() return settings().glowType end,
-            function(v) settings().glowType = v; page.refreshAppearance(); changed() end)
-        page.glowDropdown:ClearAllPoints(); page.glowDropdown:SetPoint("LEFT", styleLabel, "RIGHT", -8, -2)
-        page.colorSwatch = CreateColorControl(page.glowCard, 14, -149, "Glow Color:", function() return settings().color end, changed)
-        page.presetRow = CreatePresetRow(page.glowCard, 14, -181, settings, function() page.colorSwatch.refresh(); changed() end)
-        BuildAppearance(page, page.appearanceCard, "suddendoom")
+        BuildColorCard(page, page.appearanceCard, "suddendoom")
 
         page.previewIcon = CreatePreview(page.previewCard, 81340)
         page.refresh = function()
             page.selector.refresh()
-            page.enable.refresh(); page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance()
+            page.enable.refresh(); page.refreshColor()
             RefreshPreview(page)
         end
         pages.suddendoom = page
@@ -659,7 +619,7 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "blightfall"
         page.settingsCard = CreateCard(page, "Blightfall & Soul Reaper")
         page.previewCard = CreateCard(page, "Live Preview")
-        page.appearanceCard = CreateCard(page, "Button Glow appearance")
+        page.appearanceCard = CreateCard(page, "Glow Colour")
         AddSelector(page, page.settingsCard)
         local function settings() return DKForceDB.blightfallChain end
         local function changed()
@@ -693,34 +653,13 @@ function addon:CreateConfigPanel(standalone)
 
         page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)
 
-        local glowStyleLabel = CreateText(page.appearanceCard, "Glow Style:", 14, -38, "GameFontNormal")
-        page.glowDropdown = CreateDropdown(page.appearanceCard, 0, 0, 145,
-            function()
-                local items = {}
-                for _, glowType in ipairs(addon.GLOW_TYPES) do
-                    items[#items + 1] = { text = glowType.name, value = glowType.id }
-                end
-                return items
-            end,
-            function() return settings().glowType or "button" end,
-            function(value)
-                settings().glowType = value
-                page.refreshAppearance(); changed()
-            end)
-        page.glowDropdown:ClearAllPoints()
-        page.glowDropdown:SetPoint("LEFT", glowStyleLabel, "RIGHT", -8, -2)
-        page.colorSwatch = CreateColorControl(page.appearanceCard, 14, -76, "Glow Color:",
-            function() return settings().color end, changed)
-        page.presetRow = CreatePresetRow(page.appearanceCard, 14, -108, settings, function()
-            page.colorSwatch.refresh(); changed()
-        end)
-        BuildAppearance(page, page.appearanceCard, "blightfall", -140)
+        BuildColorCard(page, page.appearanceCard, "blightfall")
 
         page.refresh = function()
             page.selector.refresh()
             page.enable.refresh(); page.soulDelay.refresh(); page.blightDelay.refresh()
             page.iconSize.refresh(); page.fontSize.refresh(); page.iconLock.refresh()
-            page.glowDropdown.refresh(); page.colorSwatch.refresh(); page.refreshAppearance()
+            page.refreshColor()
             RefreshPreview(page)
         end
         pages.blightfall = page
