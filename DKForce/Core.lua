@@ -256,10 +256,10 @@ function addon:IsBlightfallTalented()
     return IsPlayerSpell and IsPlayerSpell(BLIGHTFALL_TALENT_ID) or false
 end
 
--- Soul Reaper is an ordinary class talent, so its cast id is expected to work
--- with IsPlayerSpell -- unlike Blightfall above.  That is an assumption, not a
--- verified fact: if this reads false while the talent is taken, the Soul Reaper
--- step silently never appears.  `/dkf blight` prints it for exactly that check.
+-- Soul Reaper is an ordinary class talent, and unlike Blightfall above its cast
+-- id doubles as its talent id -- verified in game against `/dkf blight`, which
+-- still prints this gate.  The cast/talent split is a hero-talent trait, not a
+-- general one, so this needs no second id.
 local SOUL_REAPER_TALENT_ID = 343294
 function addon:IsSoulReaperTalented()
     return IsPlayerSpell and IsPlayerSpell(SOUL_REAPER_TALENT_ID) or false
