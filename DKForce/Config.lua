@@ -28,7 +28,9 @@ local PRESETS = {
     { 0.40, 0.80, 1.00 },
     { 1.00, 0.20, 0.20 },
     { 0.70, 0.30, 1.00 },
-    { 1.00, 0.85, 0.00 },
+    -- Blizzard's NORMAL_FONT_COLOR, hardcoded rather than read from the global
+    -- so the presets stay a plain literal table like the rest of this list.
+    { 1.00, 0.82, 0.00 },
     { 1.00, 1.00, 1.00 },
 }
 
