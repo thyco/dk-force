@@ -456,7 +456,11 @@ local function BuildProbes(frame, now)
     frame._dkfProbesAt = now
 
     local previous = {}
-    for _, probe in ipairs(frame._dkfProbes or {}) do previous[probe.obj] = probe.wasShown end
+    local previousAlpha = {}
+    for _, probe in ipairs(frame._dkfProbes or {}) do
+        previous[probe.obj] = probe.wasShown
+        previousAlpha[probe.obj] = probe.alpha
+    end
 
     local probes = {}
     local function Add(obj)
@@ -470,7 +474,10 @@ local function BuildProbes(frame, now)
             local ok, kind = pcall(obj.GetObjectType, obj)
             label = (ok and kind or "?") .. " " .. tostring(obj)
         end
-        probes[#probes + 1] = { obj = obj, label = label, wasShown = previous[obj] }
+        probes[#probes + 1] = {
+            obj = obj, label = label,
+            wasShown = previous[obj], alpha = previousAlpha[obj],
+        }
     end
     -- Enumerated at most once a second rather than every frame: rebuilding a
     -- table of regions 60 times a second would churn garbage for no gain.
@@ -483,6 +490,11 @@ local function BuildProbes(frame, now)
     frame._dkfProbes = probes
 end
 
+-- Watches alpha as well as visibility, because watching only IsShown missed the
+-- mechanism WoW actually uses for flashes: an animation group fading a texture
+-- that is ALWAYS shown, sitting at alpha 0 and animating to 1.  Such a texture
+-- never transitions hidden to shown, so the first probe reported nothing while
+-- the flash was plainly happening.
 local function SampleProbes(frame)
     local probes = frame and frame._dkfProbes
     if not probes then return end
@@ -493,6 +505,19 @@ local function SampleProbes(frame)
                 stats.appears[probe.label] = (stats.appears[probe.label] or 0) + 1
             end
             probe.wasShown = shown
+        end
+        if probe.obj.GetAlpha then
+            local okAlpha, alpha = pcall(probe.obj.GetAlpha, probe.obj)
+            if okAlpha and alpha then
+                -- A rise from about-invisible to clearly-visible is a fade-in.
+                -- Thresholds rather than any change, so a slow animation logs
+                -- one event instead of one per frame of its ramp.
+                if (probe.alpha or 1) <= 0.05 and alpha > 0.30 then
+                    local key = probe.label .. "  (alpha fade-in)"
+                    stats.appears[key] = (stats.appears[key] or 0) + 1
+                end
+                probe.alpha = alpha
+            end
         end
     end
 end
