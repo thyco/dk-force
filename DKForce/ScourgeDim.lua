@@ -34,7 +34,7 @@ local scourgeTesting = false
 -- the Lesser Ghoul icon going hidden/shown for a tick, toggling the whole
 -- reminder off and on.  `defends` counts the first, `flips` the second.
 local stats = { defends = 0, flips = 0, releases = 0, hooked = 0, hookFailed = 0,
-                iconSwaps = 0, tickFixes = 0 }
+                iconSwaps = 0, tickFixes = 0, vertexColors = 0 }
 
 local function DimSettings()
     return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
@@ -122,6 +122,23 @@ local function HookIcon(icon)
             end)
             if hooked then installed = installed + 1 end
         end
+    end
+
+    -- Not a desaturation path at all, which is the point: a vertex tint sits ON
+    -- TOP of a desaturated texture, so Blizzard colouring the icon red for out
+    -- of range, or dark for missing runes, reads as colour coming back while
+    -- the grey underneath never moved.  Both need a target, so both happen only
+    -- in combat -- which is the one thing that distinguishes this flicker.
+    -- Counted, not corrected: forcing the tint flat would also erase the range
+    -- and resource cues, and that is a call to make deliberately.
+    if icon.SetVertexColor then
+        pcall(hooksecurefunc, icon, "SetVertexColor", function(self, r, g, b)
+            if applyingDesaturation then return end
+            if not (scourgeDimmed or scourgeTesting) then return end
+            if not self._dkfScourgeTracked then return end
+            stats.vertexColors = stats.vertexColors + 1
+            stats.lastVertex = string.format("%.2f %.2f %.2f", r or 1, g or 1, b or 1)
+        end)
     end
 
     for _, method in ipairs(REPAINT_METHODS) do
@@ -314,6 +331,8 @@ function addon:PrintScourgeDimDiagnostic()
     print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
     print(("  icon swaps (button replaced its texture): %d"):format(stats.iconSwaps))
     print(("  tick fixes (grey lost with NO hook firing): %d"):format(stats.tickFixes))
+    print(("  vertex tints applied over the grey: %d   last: %s")
+        :format(stats.vertexColors, stats.lastVertex or "none"))
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
@@ -322,6 +341,7 @@ function addon:ResetScourgeDimDiagnostic()
     stats.viaSetDesaturated, stats.viaSetDesaturation = 0, 0
     stats.viaSetTexture = 0
     stats.iconSwaps, stats.tickFixes = 0, 0
+    stats.vertexColors, stats.lastVertex = 0, nil
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
