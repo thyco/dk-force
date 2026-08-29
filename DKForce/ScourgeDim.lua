@@ -40,95 +40,109 @@ function addon:IsScourgeDimEnabled()
     return (settings and settings.enabled and settings.lesserGhoulDim) or false
 end
 
--- The grey is our own texture drawn over the icon, never a SetDesaturated call
--- on the button's own icon.  Blizzard rewrites that icon's desaturation and
--- vertex colour on every usable-state update -- range, runes, cooldown -- so a
--- direct call is undone within a frame or two and would need a hook on each of
--- those updates to survive.  An overlay needs no hooks and cannot be clobbered.
-local function AttachDimTexture(overlay)
-    local tex = overlay:CreateTexture(nil, "ARTWORK")
-    tex:SetAllPoints(overlay)
-    tex:SetDesaturated(true)
-    overlay._dimTexture = tex
-    return overlay
+-- The grey is our own texture ON THE BUTTON -- not a child frame drawn over it,
+-- and not SetDesaturated on the button's own icon.
+--
+-- Not SetDesaturated: that flickered back to full colour in combat and was
+-- abandoned, see the file header.  Not a child frame: a child draws above every
+-- texture its parent owns, whatever the draw layer, so the copy landed on top of
+-- the button's border and hid a restyled border behind the light grey bevel
+-- baked into WoW icon art.  A texture on the button obeys draw-layer order, so a
+-- border on a higher layer stays where it belongs.
+--
+-- The Cooldown frame is a child too, so it now draws above this: the GCD sweep
+-- is visible again, which was the original request.
+local function GetIcon(frame)
+    local icon = frame and (frame.Icon or frame.icon)
+    if icon and icon.GetTexture and icon.GetDrawLayer then return icon end
+    return nil
 end
 
--- Capture the icon's texture out of combat and reuse it later.  Cooldown
--- Manager item frames hand back secret values in combat -- CDMHook already
--- refuses to read a CDM spell ID under InCombatLockdown, and the whole Lesser
--- Ghoul watcher exists because aura stacks went secret in 12.1.  Reading the
--- texture at dim time would put that same protected read on the combat path,
--- so it is cached when the overlay is built and refreshed on every rescan.
-local function CacheIconTexture(overlay)
-    local target = overlay._targetFrame
-    local icon = target and (target.Icon or target.icon)
-    if not (icon and icon.GetTexture) then return end
-    local ok, texture = pcall(icon.GetTexture, icon)
-    if ok and texture then overlay._iconTexture = texture end
+local function AttachDimTexture(frame, icon)
+    if frame._dkfDimTexture then return frame._dkfDimTexture end
 
-    -- Copy the source icon's texture coordinates as well as its art.  WoW icon
-    -- files carry a light grey bevel baked into the image, and UI packs crop it
-    -- off with SetTexCoord so their own border can show instead.  A copy that
-    -- takes the texture but not the crop draws that bevel back over a border
-    -- the user deliberately restyled -- the greyed icon then looks like stock
-    -- Blizzard art sitting inside a custom button.
-    if icon.GetTexCoord then
-        local okCoord, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = pcall(icon.GetTexCoord, icon)
-        if okCoord and ULx then
-            overlay._iconTexCoord = { ULx, ULy, LLx, LLy, URx, URy, LRx, LRy }
-        end
+    -- One sublevel above the icon: covers the art, stays under anything the
+    -- button draws higher.
+    local layer, sublevel = "ARTWORK", 0
+    if icon then
+        local ok, iconLayer, iconSublevel = pcall(icon.GetDrawLayer, icon)
+        if ok and iconLayer then layer, sublevel = iconLayer, iconSublevel or 0 end
+    end
+
+    local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, math.min(sublevel + 1, 7))
+    if not (ok and tex) then return nil end
+    if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
+    tex:SetDesaturated(true)
+    tex:Hide()
+    frame._dkfDimTexture = tex
+    return tex
+end
+
+-- Capture the icon's art out of combat and reuse it later.  Cooldown Manager
+-- item frames hand back secret values in combat -- CDMHook already refuses to
+-- read a CDM spell ID under InCombatLockdown, and the Lesser Ghoul watcher
+-- exists at all because aura stacks went secret in 12.1 -- so reading the
+-- texture at dim time would put a protected read on the combat path.
+local function CacheIcon(record)
+    local icon = GetIcon(record.frame)
+    record.icon = icon
+    if not icon then return end
+    local ok, texture = pcall(icon.GetTexture, icon)
+    if ok and texture then record.texture = texture end
+    -- Copy the crop as well as the art: a UI pack that crops the icon with
+    -- SetTexCoord expects its own border in the space that crop frees up.
+    local okCoord, ULx, ULy, LLx, LLy, URx, URy, LRx, LRy = pcall(icon.GetTexCoord, icon)
+    if okCoord and ULx then
+        record.texCoord = { ULx, ULy, LLx, LLy, URx, URy, LRx, LRy }
     end
 end
 
-local function BuildOverlay(targetFrame, spellKey)
-    local overlay = AttachDimTexture(addon:CreateOverlay(targetFrame, spellKey))
-    CacheIconTexture(overlay)
-    return overlay
+local function BuildRecord(frame)
+    local record = { frame = frame }
+    CacheIcon(record)
+    record.tex = AttachDimTexture(frame, record.icon)
+    return record.tex and record or nil
 end
 
-local function ApplyDim(overlay)
-    local target = overlay._targetFrame
+local function ApplyDim(record)
+    local frame, tex = record.frame, record.tex
     -- Never decorate a hidden or recycled frame, for the same reason the
     -- Festering glow checks this: the Cooldown Manager keeps item frames alive
     -- while a full-screen panel is open.
-    if not (target and target:IsVisible()) then
-        overlay:Hide()
+    if not (frame and frame:IsVisible() and tex) then
+        if tex then tex:Hide() end
         return 0
     end
 
-    local tex = overlay._dimTexture
-    if overlay._iconTexture then
-        tex:SetTexture(overlay._iconTexture)
-        local coord = overlay._iconTexCoord
-        if coord then
-            tex:SetTexCoord(coord[1], coord[2], coord[3], coord[4], coord[5], coord[6], coord[7], coord[8])
+    if record.texture then
+        tex:SetTexture(record.texture)
+        local c = record.texCoord
+        if c then
+            tex:SetTexCoord(c[1], c[2], c[3], c[4], c[5], c[6], c[7], c[8])
         else
             tex:SetTexCoord(0, 1, 0, 1)
         end
         tex:SetDesaturated(true)
         tex:SetVertexColor(1, 1, 1, 1)
     else
-        -- Reset the crop first: the veil is a solid colour, and a leftover
-        -- icon crop would shrink it away from the icon's edges.
+        -- Registered mid-combat, or a frame exposing no icon, so no art was
+        -- cached.  A dark veil still reads as "not this one".
         tex:SetTexCoord(0, 1, 0, 1)
-        -- Registered mid-combat, or a frame that exposes no icon region, so no
-        -- texture was ever cached.  Fall back to a dark veil: the reminder
-        -- still reads as "not this one" instead of silently doing nothing.
         tex:SetColorTexture(0, 0, 0, 0.55)
     end
-    overlay:Show()
+    tex:Show()
     return 1
 end
 
 local function HideDim()
-    for _, overlay in pairs(scourgeOverlays)    do overlay:Hide() end
-    for _, overlay in pairs(cdmScourgeOverlays) do overlay:Hide() end
+    for _, record in pairs(scourgeOverlays)    do if record.tex then record.tex:Hide() end end
+    for _, record in pairs(cdmScourgeOverlays) do if record.tex then record.tex:Hide() end end
 end
 
 local function ShowDim()
     local applied = 0
-    for _, overlay in pairs(scourgeOverlays)    do applied = applied + ApplyDim(overlay) end
-    for _, overlay in pairs(cdmScourgeOverlays) do applied = applied + ApplyDim(overlay) end
+    for _, record in pairs(scourgeOverlays)    do applied = applied + ApplyDim(record) end
+    for _, record in pairs(cdmScourgeOverlays) do applied = applied + ApplyDim(record) end
     return applied
 end
 
@@ -144,16 +158,18 @@ function addon:SetScourgeDimmed(value)
 end
 
 function addon:CreateScourgeOverlays()
-    for _, overlay in pairs(scourgeOverlays) do
-        overlay:Hide()
-        overlay:SetParent(nil)
+    -- Hide rather than destroy: a texture cannot be unparented, and it is
+    -- cached on the button, so a button that is still tracked reuses the one it
+    -- already owns instead of accumulating a new one on every rescan.
+    for _, record in pairs(scourgeOverlays) do
+        if record.tex then record.tex:Hide() end
     end
     wipe(scourgeOverlays)
 
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "scourgeStrike" then
             for _, button in ipairs(buttons) do
-                scourgeOverlays[button] = BuildOverlay(button, spellKey)
+                scourgeOverlays[button] = BuildRecord(button)
             end
         end
     end
@@ -164,17 +180,18 @@ end
 -- same way the Festering and Lesser Ghoul frames are registered.
 function addon:RegisterCDMScourgeFrame(frame)
     if not addon:IsScourgeDimEnabled() or cdmScourgeOverlays[frame] then return end
-    local overlay = BuildOverlay(frame, "scourgeStrike")
-    cdmScourgeOverlays[frame] = overlay
-    if scourgeDimmed then ApplyDim(overlay) end
+    local record = BuildRecord(frame)
+    if not record then return end
+    cdmScourgeOverlays[frame] = record
+    if scourgeDimmed then ApplyDim(record) end
 end
 
 -- A talent swap replaces Scourge Strike with Clawing Shadows or Vampiric
 -- Strike, which changes the icon art under a cached texture.  Re-cache out of
 -- combat rather than re-reading on the combat path.
 function addon:RefreshScourgeDim()
-    for _, overlay in pairs(scourgeOverlays)    do CacheIconTexture(overlay) end
-    for _, overlay in pairs(cdmScourgeOverlays) do CacheIconTexture(overlay) end
+    for _, record in pairs(scourgeOverlays)    do CacheIcon(record) end
+    for _, record in pairs(cdmScourgeOverlays) do CacheIcon(record) end
     if scourgeDimmed then ShowDim() end
 end
 
