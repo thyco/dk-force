@@ -57,10 +57,15 @@ end
 
 local applyingDesaturation = false
 
+-- A texture carries ONE desaturation state behind two APIs: SetDesaturated
+-- takes a boolean, SetDesaturation takes a 0-1 float.  Either sets it, either
+-- clears it.  Write through both so it does not matter which one a given client
+-- build or UI pack honours.
 local function SetIconDesaturated(icon, value)
     if not icon then return 0 end
     applyingDesaturation = true
-    pcall(icon.SetDesaturated, icon, value)
+    if icon.SetDesaturated  then pcall(icon.SetDesaturated, icon, value) end
+    if icon.SetDesaturation then pcall(icon.SetDesaturation, icon, value and 1 or 0) end
     applyingDesaturation = false
     return 1
 end
@@ -99,12 +104,24 @@ local function HookIcon(icon)
         SetIconDesaturated(self, true)
     end
 
-    -- `value` truthy means someone just set the grey we want anyway.
-    local ok = pcall(hooksecurefunc, icon, "SetDesaturated", function(self, value)
-        if value then return end
-        Reassert(self, "viaSetDesaturated")
-    end)
-    if ok then installed = installed + 1 end
+    -- Both desaturation APIs, because either can clear what the other set.
+    -- Hooking only SetDesaturated is what let this flicker survive two fixes:
+    -- /dkf dim showed two hooks installed and zero defends while the icon was
+    -- plainly losing its grey, which can only mean the clear came through a
+    -- call nothing was watching.  SetDesaturation is the one GreyOnCooldown
+    -- uses, and it was never hooked.
+    --
+    -- A truthy boolean, or any float above zero, is someone setting the grey we
+    -- want anyway -- nothing to defend against.
+    for _, method in ipairs({ "SetDesaturated", "SetDesaturation" }) do
+        if icon[method] then
+            local hooked = pcall(hooksecurefunc, icon, method, function(self, value)
+                if value and value ~= 0 then return end
+                Reassert(self, "via" .. method)
+            end)
+            if hooked then installed = installed + 1 end
+        end
+    end
 
     for _, method in ipairs(REPAINT_METHODS) do
         if icon[method] then
@@ -264,16 +281,17 @@ function addon:PrintScourgeDimDiagnostic()
     print(("  defends (repaint cleared the grey): %d"):format(stats.defends))
     -- Which call is wiping the grey.  Names the culprit outright rather than
     -- leaving the next round of this to guesswork.
-    print(("    via SetDesaturated %d, SetTexture %d, SetAtlas %d, SetTexCoord %d")
-        :format(stats.viaSetDesaturated or 0, stats.viaSetTexture or 0,
-                stats.viaSetAtlas or 0, stats.viaSetTexCoord or 0))
+    print(("    via SetDesaturated %d, SetDesaturation %d, SetTexture %d, SetAtlas %d, SetTexCoord %d")
+        :format(stats.viaSetDesaturated or 0, stats.viaSetDesaturation or 0,
+                stats.viaSetTexture or 0, stats.viaSetAtlas or 0, stats.viaSetTexCoord or 0))
     print(("  flips (reminder turned on/off): %d   releases: %d"):format(stats.flips, stats.releases))
     print("  Use /dkf dimreset to zero the counters before a test fight.")
 end
 
 function addon:ResetScourgeDimDiagnostic()
     stats.defends, stats.flips, stats.releases = 0, 0, 0
-    stats.viaSetDesaturated, stats.viaSetTexture = 0, 0
+    stats.viaSetDesaturated, stats.viaSetDesaturation = 0, 0
+    stats.viaSetTexture = 0
     stats.viaSetAtlas, stats.viaSetTexCoord = 0, 0
     print("|cffcc0000DK Force:|r Desaturation counters reset.")
 end
