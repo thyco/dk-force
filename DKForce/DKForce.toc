@@ -20,6 +20,7 @@ Glow.lua
 Festering.lua
 SuddenDoom.lua
 BloodDnD.lua
+Blightfall.lua
 ButtonScanner.lua
 Config.lua
 MinimapButton.lua
