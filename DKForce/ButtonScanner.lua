@@ -201,7 +201,7 @@ function addon:ScanAllButtons()
     if addon.CreateFesteringOverlays then addon:CreateFesteringOverlays() end
     if addon.CreateSuddenDoomOverlays then addon:CreateSuddenDoomOverlays() end
     if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
-    if addon.CollectScourgeIcons then addon:CollectScourgeIcons() end
+    if addon.CreateScourgeOverlays then addon:CreateScourgeOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
 end
