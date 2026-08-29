@@ -234,11 +234,20 @@ function addon:IsUnholySpec()
     return self:GetActiveSpecID() == 252
 end
 
+-- Blightfall's talent id differs from its cast id: UNIT_SPELLCAST_SUCCEEDED
+-- reports 1271967 (addon.SPELLS.BLIGHTFALL.id), but IsPlayerSpell only
+-- recognises the talent, 1271974.  Upstream's Gargoyle tracker draws the same
+-- distinction (GARGOYLE_SPELL_ID vs GARGOYLE_TALENT_ID); the port originally
+-- conflated them, so the gate was permanently false and the prompt never
+-- appeared.  Only IsPlayerSpell takes this id -- every cast comparison and the
+-- icon keep using addon.SPELLS.BLIGHTFALL.
+local BLIGHTFALL_TALENT_ID = 1271974
+
 -- Upstream gated the Blightfall chain on the San'layn hero specialization.
 -- That is only a proxy: a San'layn build that has not taken the talent would
 -- still be told to press a spell it does not have.  Gate on the talent.
 function addon:IsBlightfallTalented()
-    return IsPlayerSpell and IsPlayerSpell(addon.SPELLS.BLIGHTFALL.id) or false
+    return IsPlayerSpell and IsPlayerSpell(BLIGHTFALL_TALENT_ID) or false
 end
 
 local function GetSuddenDoomOverlaySettings(overlay)
@@ -1486,7 +1495,10 @@ SlashCmdList["DKFORCE"] = function(msg)
         say("GetActiveSpecID(): " .. (okSpec and tostring(specID) or "error"))
         local okUnholy, unholy = pcall(addon.IsUnholySpec, addon)
         say("IsUnholySpec(): " .. (okUnholy and yn(unholy) or "error"))
-        say("IsPlayerSpell(1271967) Blightfall gate: " .. spellKnown(1271967))
+        say("IsPlayerSpell(1271974) Blightfall TALENT (the gate): "
+            .. spellKnown(BLIGHTFALL_TALENT_ID))
+        say("IsPlayerSpell(1271967) Blightfall CAST id (expected false): "
+            .. spellKnown(addon.SPELLS.BLIGHTFALL.id))
         say("IsPlayerSpell(1233448) Dark Transformation: " .. spellKnown(1233448))
         say("IsPlayerSpell(343294) Soul Reaper: " .. spellKnown(343294))
         local spellName = "nil"
