@@ -65,7 +65,7 @@ else say "stale slash command" "OK"; fi
 #    Task 9 made two deliberate, named edits (dropping BloodDnDGlowActiveOn and
 #    the `shared` yield parameter) and this hash was updated with them, after the
 #    diff was inspected and confirmed to contain only those two edits.
-DND_EXPECTED_MD5=7c087830ebf974c5b67242ea88454605
+DND_EXPECTED_MD5=1d26116eaa80b74e05f7c4a1cae69a60
 if command -v md5 >/dev/null 2>&1; then _md5() { md5 -q; }
 else _md5() { md5sum | cut -d" " -f1; }; fi
 dndstart=$(grep -n "^-- Death and Decay Buff Reminder (Blood)$" "$ADDON/Core.lua" 2>/dev/null | cut -d: -f1)

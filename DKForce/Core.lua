@@ -947,8 +947,10 @@ end
 -- seconds when you leave your own patch, so the icon blinks off for a fraction
 -- of a second while the bonus is in fact still up.  Require the icon to stay
 -- hidden for a short grace period before glowing; the glow still clears the
--- instant the buff comes back.
-local DND_MISSING_GLOW_DELAY = 0.5
+-- instant the buff comes back.  Half a second read as sluggish in play; a
+-- quarter second is two-and-a-bit poll ticks, still short enough to feel
+-- immediate while filtering the Cleaving Strikes blink.
+local DND_MISSING_GLOW_DELAY = 0.25
 local dndMissingWatcher = CreateFrame("Frame")
 local dndMissingElapsed = 0
 local dndMissingFor     = 0
