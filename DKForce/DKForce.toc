@@ -16,6 +16,11 @@ Libs/LibStub/LibStub.lua
 Libs/LibCustomGlow-1.0/LibCustomGlow-1.0.lua
 
 Core.lua
+Glow.lua
+Festering.lua
+SuddenDoom.lua
+BloodDnD.lua
+Blightfall.lua
 ButtonScanner.lua
 Config.lua
 MinimapButton.lua

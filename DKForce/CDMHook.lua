@@ -33,10 +33,6 @@ local function LesserGhoulEnabled()
     return (settings and settings.enabled and settings.lesserGhoulGlow) or false
 end
 
-local function DnDMissingEnabled()
-    return DKForceDB and DKForceDB.bloodDndMissing and DKForceDB.bloodDndMissing.enabled
-end
-
 -- Death and Decay appears twice in the CDM: the ability icon is a glow target,
 -- while the buff granted by standing in it is the detection source.  The buff
 -- row reports its aura ID only while the aura is active and falls back to the
@@ -59,7 +55,7 @@ end
 
 local function RegisterItem(item)
     if not DKForceDB or (not DKForceDB.trackCDMFestering
-        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not DnDMissingEnabled()) then return end
+        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled() and not addon:IsDnDMissingEnabled()) then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
@@ -71,7 +67,7 @@ local function RegisterItem(item)
             return "deathCoil"
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif DnDMissingEnabled()
+        elseif addon:IsDnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
                 or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
             -- A reported aura ID settles it outright; otherwise fall back to
@@ -115,7 +111,7 @@ local function RegisterEllesmereItem(item, euiCDM)
             return "deathCoil"
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
-        elseif DnDMissingEnabled()
+        elseif addon:IsDnDMissingEnabled()
             and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
             -- A reported aura ID settles it outright; otherwise fall back to
             -- viewer ownership, which also holds while the aura is down.
