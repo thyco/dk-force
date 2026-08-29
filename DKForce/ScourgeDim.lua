@@ -61,15 +61,19 @@ end
 local function AttachDimTexture(frame, icon)
     if frame._dkfDimTexture then return frame._dkfDimTexture end
 
-    -- One sublevel above the icon: covers the art, stays under anything the
-    -- button draws higher.
+    -- The icon's exact layer AND sublevel, not one above it.  Textures on the
+    -- same sublevel draw in creation order, so being created later is enough to
+    -- sit above the art -- and sharing the sublevel puts this in the identical
+    -- position in the stack as the icon it copies.  A sublevel above meant the
+    -- button's frame art fell between the two: the real icon showed through the
+    -- corner cut-outs while this copy was clipped by them.
     local layer, sublevel = "ARTWORK", 0
     if icon then
         local ok, iconLayer, iconSublevel = pcall(icon.GetDrawLayer, icon)
         if ok and iconLayer then layer, sublevel = iconLayer, iconSublevel or 0 end
     end
 
-    local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, math.min(sublevel + 1, 7))
+    local ok, tex = pcall(frame.CreateTexture, frame, nil, layer, nil, sublevel)
     if not (ok and tex) then return nil end
     if icon then tex:SetAllPoints(icon) else tex:SetAllPoints(frame) end
     tex:SetDesaturated(true)
@@ -123,7 +127,21 @@ local function ApplyDim(record)
             tex:SetTexCoord(0, 1, 0, 1)
         end
         tex:SetDesaturated(true)
-        tex:SetVertexColor(1, 1, 1, 1)
+        -- Inherit the icon's own tint and alpha rather than forcing white.  The
+        -- button dims its icon for unusable states and UI packs set a resting
+        -- alpha; overriding both made the greyed copy read brighter and flatter
+        -- than the button beside it, which is the residual difference after the
+        -- layering was fixed.
+        local r, g, b, a = 1, 1, 1, 1
+        if record.icon and record.icon.GetVertexColor then
+            local ok, ir, ig, ib, ia = pcall(record.icon.GetVertexColor, record.icon)
+            if ok and ir then r, g, b, a = ir, ig, ib, ia or 1 end
+        end
+        tex:SetVertexColor(r, g, b, a)
+        if record.icon and record.icon.GetAlpha then
+            local ok, alpha = pcall(record.icon.GetAlpha, record.icon)
+            if ok and alpha then tex:SetAlpha(alpha) end
+        end
     else
         -- Registered mid-combat, or a frame exposing no icon, so no art was
         -- cached.  A dark veil still reads as "not this one".
