@@ -638,12 +638,12 @@ function addon:CreateConfigPanel(standalone)
         page.enable = CreateCheck(page.settingsCard, "Enable the chain prompt", 14, -76,
             function() return settings().enabled end,
             function(v) settings().enabled = v; changed() end)
-        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper delay", 14, -110, 250, 1, 12, 0.5,
-            function() return settings().soulReaperDelay end,
-            function(v) settings().soulReaperDelay = v; changed() end)
-        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall delay after Soul Reaper", 14, -160, 250, 1, 15, 0.5,
-            function() return settings().blightfallDelay end,
-            function(v) settings().blightfallDelay = v; changed() end)
+        page.soulDelay = CreateSlider(page.settingsCard, "Soul Reaper after Dark Transformation", 14, -110, 250, 0, 15, 0.5,
+            function() return settings().soulReaperAfterDT end,
+            function(v) settings().soulReaperAfterDT = v; changed() end)
+        page.blightDelay = CreateSlider(page.settingsCard, "Blightfall after Dark Transformation", 14, -160, 250, 0, 20, 0.5,
+            function() return settings().blightfallAfterDT end,
+            function(v) settings().blightfallAfterDT = v; changed() end)
         page.iconSize = CreateSlider(page.settingsCard, "Icon Size", 14, -210, 250, 36, 128, 1,
             function() return settings().iconSize or 64 end,
             function(v) settings().iconSize = v; changed() end)
@@ -656,8 +656,9 @@ function addon:CreateConfigPanel(standalone)
         -- Kept short and raised so it still fits the shorter canvas Blizzard's
         -- AddOns settings page gives this panel.
         page.hint = CreateText(page.settingsCard,
-            "Unholy, Blightfall talented.  Dark Transformation starts the Soul Reaper "
-            .. "countdown; Soul Reaper starts the Blightfall one.  Unlock to drag the icon.",
+            "Unholy, Blightfall talented.  Dark Transformation starts both countdowns.  "
+            .. "Set a delay to 0 to hide that icon.  The glow only shows in combat; the "
+            .. "icon stays until Blightfall is cast.  Unlock to drag the icon.",
             14, -336, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
 
         page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)

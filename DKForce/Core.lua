@@ -186,10 +186,16 @@ addon.DEFAULT_DB = {
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
     -- so `enabled` is the single switch for the whole feature.
     blightfallChain = {
-        enabled         = false,
-        soulReaperDelay = 6.0,
-        blightfallDelay = 7.5,
-        iconSize        = 64,
+        enabled           = false,
+        -- Both delays are measured from the Dark Transformation cast, and 0
+        -- switches that icon off.  These are deliberately NOT the old
+        -- `soulReaperDelay` / `blightfallDelay` keys: `blightfallDelay` meant
+        -- "seconds after Soul Reaper", so a saved 7.5 would silently reappear
+        -- as "7.5s after Dark Transformation" -- ahead of Soul Reaper itself.
+        -- New names let the DEFAULT_DB merge install the new defaults instead.
+        soulReaperAfterDT = 7.0,
+        blightfallAfterDT = 13.0,
+        iconSize          = 64,
         -- Locked by default: the prompt sits at screen centre and is visible for
         -- most of a chain cycle, so an unlocked (mouse-enabled) icon would eat
         -- clicks in the middle of the screen during combat.  A Test only
@@ -248,6 +254,15 @@ local BLIGHTFALL_TALENT_ID = 1271974
 -- still be told to press a spell it does not have.  Gate on the talent.
 function addon:IsBlightfallTalented()
     return IsPlayerSpell and IsPlayerSpell(BLIGHTFALL_TALENT_ID) or false
+end
+
+-- Soul Reaper is an ordinary class talent, so its cast id is expected to work
+-- with IsPlayerSpell -- unlike Blightfall above.  That is an assumption, not a
+-- verified fact: if this reads false while the talent is taken, the Soul Reaper
+-- step silently never appears.  `/dkf blight` prints it for exactly that check.
+local SOUL_REAPER_TALENT_ID = 343294
+function addon:IsSoulReaperTalented()
+    return IsPlayerSpell and IsPlayerSpell(SOUL_REAPER_TALENT_ID) or false
 end
 
 local function GetSuddenDoomOverlaySettings(overlay)
@@ -983,13 +998,62 @@ end)
 -- -------------------------------------------------------
 -- Icon prompt only.  Upstream also drew a scrolling timeline lane; DK Force
 -- keeps just the single movable icon with its countdown and ready glow.
-local BLIGHTFALL_GRACE = 5
+-- Both deadlines are anchored to the Dark Transformation cast, so `blightState`
+-- stores that one timestamp and the step only decides which icon is on screen.
+-- The delays are read live rather than captured at cast time, so a slider moved
+-- mid-chain retimes the prompt already running.
+--
+-- Nothing expires on a timer.  Dark Transformation's button becomes Blightfall
+-- and cannot be recast until Blightfall is, so a pending prompt is genuinely
+-- still owed after the fight ends -- and Blizzard shows no timer for it.  Only a
+-- Blightfall cast clears the chain; combat gates the glow, not the icon.
+--
+-- How long the preview holds on the final step before replaying the timeline.
+local BLIGHTFALL_TEST_HOLD = 2
 local blightIconFrame
 local blightState
 local blightTest = false
 
 local function BlightfallSettings()
     return DKForceDB and DKForceDB.blightfallChain
+end
+
+-- A delay of 0 means "never show this icon".
+local function BlightfallDelays()
+    local s = BlightfallSettings()
+    if not s then return 0, 0 end
+    return s.soulReaperAfterDT or 0, s.blightfallAfterDT or 0
+end
+
+-- The step the chain opens on.  A zero Soul Reaper delay is the same path as an
+-- untalented Soul Reaper: go straight to Blightfall.
+local function InitialBlightfallStep(ignoreTalent)
+    local soulReaperAfter = BlightfallDelays()
+    if soulReaperAfter > 0 and (ignoreTalent or addon:IsSoulReaperTalented()) then
+        return "SOUL_REAPER"
+    end
+    return "BLIGHTFALL"
+end
+
+-- Advances the step against the live delays and returns the deadline for the
+-- icon that should be on screen, or nil when nothing should be.  Shared by the
+-- OnUpdate and by ApplyBlightfallSettings: OnUpdate never runs on a hidden
+-- frame, so visibility cannot be decided in the OnUpdate alone.
+local function ResolveBlightfallStep()
+    if not blightState then return nil end
+    local soulReaperAfter, blightfallAfter = BlightfallDelays()
+    if blightState.step == "SOUL_REAPER" then
+        local elapsed = GetTime() - blightState.dtAt
+        -- Either the step was switched off under it, or Soul Reaper was never
+        -- cast and Blightfall has come due anyway.  Both hand over, which drops
+        -- the Soul Reaper icon in the same frame.
+        if soulReaperAfter <= 0 or (blightfallAfter > 0 and elapsed >= blightfallAfter) then
+            blightState.step = "BLIGHTFALL"
+        end
+    end
+    local deadline = blightState.step == "SOUL_REAPER" and soulReaperAfter or blightfallAfter
+    if deadline <= 0 then return nil end
+    return deadline
 end
 
 local function BlightfallStepInfo(step)
@@ -1017,18 +1081,14 @@ local function StartBlightfallReadyGlow(frame)
 end
 
 local function UpdateBlightfallIcon(self)
-    if not blightState then StopBlightfallReadyGlow(self); self:Hide(); return end
-    local raw = blightState.delay - (GetTime() - blightState.started)
-    if blightTest and raw <= 0 then
-        local s = BlightfallSettings()
-        local nextStep = blightState.step == "SOUL_REAPER" and "BLIGHTFALL" or "SOUL_REAPER"
-        local delay = nextStep == "SOUL_REAPER" and s.soulReaperDelay or s.blightfallDelay
-        blightState = { step = nextStep, delay = delay, started = GetTime() }
-        return
-    elseif raw < -BLIGHTFALL_GRACE then
-        blightState = nil
-        StopBlightfallReadyGlow(self)
-        self:Hide()
+    local deadline = ResolveBlightfallStep()
+    if not deadline then StopBlightfallReadyGlow(self); self:Hide(); return end
+    local raw = deadline - (GetTime() - blightState.dtAt)
+    -- The preview replays the whole Dark Transformation timeline on a loop; a
+    -- real chain simply stays on the final step until Blightfall is cast.
+    if blightTest and raw <= -BLIGHTFALL_TEST_HOLD then
+        blightState.dtAt = GetTime()
+        blightState.step = InitialBlightfallStep(true)
         return
     end
     local _, _, iconID = BlightfallStepInfo(blightState.step)
@@ -1037,7 +1097,15 @@ local function UpdateBlightfallIcon(self)
         -- The ready glow is the whole "cast it now" signal; a countdown that
         -- has run out has no number left to show, so the field goes empty.
         self.time:SetText("")
-        if not self._glowActive then StartBlightfallReadyGlow(self) end
+        -- Out of combat the icon stays -- Blightfall is still owed and Blizzard
+        -- shows no timer for it -- but the glow would be noise while idle.  The
+        -- preview has to bypass this or Test would show nothing at the target
+        -- dummy-free spots where it is actually used.
+        if blightTest or InCombatLockdown() then
+            if not self._glowActive then StartBlightfallReadyGlow(self) end
+        else
+            StopBlightfallReadyGlow(self)
+        end
     else
         self.time:SetText(string.format("%.1f", raw))
         StopBlightfallReadyGlow(self)
@@ -1097,21 +1165,23 @@ local function ApplyBlightfallSettings()
         iconFrame:ClearAllPoints()
         iconFrame:SetPoint(s.iconPosition[1], UIParent, s.iconPosition[2], s.iconPosition[3], s.iconPosition[4])
     end
-    if blightState then
-        local raw = blightState.delay - (GetTime() - blightState.started)
-        if raw <= 0 then
-            if s.enabled or blightTest then StartBlightfallReadyGlow(iconFrame) end
-        else
-            StopBlightfallReadyGlow(iconFrame)
-        end
-    end
     -- Upstream also accepted the timeline as a reason to keep running.  The
     -- icon is the only display here, so `enabled` alone is the master switch.
     if (not s.enabled and not blightTest)
         or (not blightTest and not addon:IsBlightfallTalented()) then
         StopBlightfallReadyGlow(iconFrame)
         iconFrame:Hide(); blightState = nil
+        return
     end
+    -- Deciding visibility here as well as in the OnUpdate is what lets a delay
+    -- set back above 0 bring the icon back: a hidden frame runs no OnUpdate.
+    if not ResolveBlightfallStep() then
+        StopBlightfallReadyGlow(iconFrame)
+        iconFrame:Hide()
+        return
+    end
+    iconFrame:Show()
+    UpdateBlightfallIcon(iconFrame)
 end
 
 function addon:OnBlightfallChainSpellCast(spellID)
@@ -1132,28 +1202,28 @@ function addon:OnBlightfallChainSpellCast(spellID)
     -- StopBlightfallTest.  The preview's fake state goes with it, so a real
     -- Soul Reaper cast cannot chain off a step that was never really cast.
     if blightTest then blightTest = false; blightState = nil end
-    -- Dark Transformation opens the chain: it starts the Soul Reaper
-    -- countdown, and casting Soul Reaper then starts the Blightfall one.
+    -- Dark Transformation opens the chain and is the anchor for both deadlines.
     -- This is the only reason the spell is still tracked at all.
     if spellID == addon.SPELLS.DARK_TRANSFORMATION.id then
-        blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
-    elseif spellID == addon.SPELLS.SOUL_REAPER.id and blightState and blightState.step == "SOUL_REAPER" then
-        blightState = { step = "BLIGHTFALL", delay = s.blightfallDelay or 7.5, started = GetTime() }
-    -- Blightfall always completes/resets the chain. It can be cast without the
-    -- tracked Soul Reaper step, so never leave an older countdown running.
+        blightState = { dtAt = GetTime(), step = InitialBlightfallStep() }
+    elseif spellID == addon.SPELLS.SOUL_REAPER.id then
+        -- Casting Soul Reaper only swaps which icon is on screen: Blightfall's
+        -- deadline is anchored to Dark Transformation, so the countdown carries
+        -- straight on rather than restarting from this cast.
+        if blightState and blightState.step == "SOUL_REAPER" then
+            blightState.step = "BLIGHTFALL"
+        else
+            return
+        end
+    -- The only thing that ends a chain.  Dark Transformation's button becomes
+    -- Blightfall and stays locked out until this lands, so the prompt is owed
+    -- until it does -- across combat ends, and with no timer of its own.
     elseif spellID == addon.SPELLS.BLIGHTFALL.id then
         blightState = nil
     else
         return
     end
     ApplyBlightfallSettings()
-    local iconFrame = CreateBlightfallIconFrame()
-    if blightState then
-        iconFrame:SetShown(s.enabled)
-    else
-        StopBlightfallReadyGlow(iconFrame)
-        iconFrame:Hide()
-    end
 end
 
 function addon:RefreshBlightfallTracker() ApplyBlightfallSettings() end
@@ -1162,7 +1232,9 @@ function addon:TestBlightfallTracker()
     local s = BlightfallSettings()
     if not s then return end
     blightTest = true
-    blightState = { step = "SOUL_REAPER", delay = s.soulReaperDelay or 6, started = GetTime() }
+    -- The preview ignores the Soul Reaper talent so both icons can be seen and
+    -- styled without respeccing; only a zero delay hides a step here.
+    blightState = { dtAt = GetTime(), step = InitialBlightfallStep(true) }
     local iconFrame = CreateBlightfallIconFrame()
     ApplyBlightfallSettings()
     -- The test must be visible even while the feature itself is switched off,
@@ -1512,13 +1584,23 @@ SlashCmdList["DKFORCE"] = function(msg)
             end
         end
         say("C_Spell.GetSpellInfo(1271967) name: " .. spellName)
+        local okTalent, srTalented = pcall(addon.IsSoulReaperTalented, addon)
+        say("IsSoulReaperTalented() (gates the Soul Reaper step): "
+            .. (okTalent and yn(srTalented) or "error"))
+        if db then
+            say(string.format("delays after Dark Transformation: Soul Reaper = %s, Blightfall = %s (0 = icon off)",
+                tostring(db.soulReaperAfterDT), tostring(db.blightfallAfterDT)))
+        end
         if blightState then
-            local remaining = blightState.delay - (GetTime() - blightState.started)
-            say(string.format("blightState: step = %s, remaining = %.2f",
-                tostring(blightState.step), remaining))
+            local elapsed = GetTime() - blightState.dtAt
+            local soulReaperAfter, blightfallAfter = BlightfallDelays()
+            local deadline = blightState.step == "SOUL_REAPER" and soulReaperAfter or blightfallAfter
+            say(string.format("blightState: step = %s, %.2fs since Dark Transformation, remaining = %.2f",
+                tostring(blightState.step), elapsed, deadline - elapsed))
         else
             say("blightState: nil")
         end
+        say("InCombatLockdown() (gates the glow, not the icon): " .. yn(InCombatLockdown()))
         say("blightTest: " .. yn(blightTest))
         if blightIconFrame then
             local okShown, shown = pcall(blightIconFrame.IsShown, blightIconFrame)
