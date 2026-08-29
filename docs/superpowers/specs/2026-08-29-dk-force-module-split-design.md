@@ -142,9 +142,11 @@ The existing harness covers most of the risk of a pure move:
 - **Check 7, the D&D behavioural spec**, is repointed from `Core.lua` to
   `BloodDnD.lua` and must still pass all ten assertions. This is the strongest
   evidence available without loading the game.
-- **Check 5** guards the promoted names: once `StopFesteringGlow` and the two
-  combat handlers become `addon:` methods, no bare local of that name should
-  remain.
+- **Check 5 must not be used here.** It fails if any name in
+  `removed-symbols.txt` appears anywhere under `DKForce/`. The promoted names —
+  `StopFesteringGlow`, `OnFesteringCombatStart`, `OnFesteringCombatEnd` — still
+  exist, as methods, so listing them would fail the build. Nothing is deleted by
+  this move, so `removed-symbols.txt` is not touched at all.
 
 Beyond the harness: an in-game smoke test of each of the five features, since
 "it parses and the D&D logic is unchanged" does not prove that, say, the
