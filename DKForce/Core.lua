@@ -462,6 +462,8 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:ToggleDebug()
     elseif cmd == "blight" then
         addon:PrintBlightfallDiagnostic()
+    elseif cmd == "icon" then
+        addon:PrintIconDump()
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false

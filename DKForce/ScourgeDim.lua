@@ -257,3 +257,78 @@ function addon:TestScourgeDim()
     end
     return count
 end
+
+-- /dkf icon -- dump every texture on the first tracked Scourge Strike button.
+--
+-- Five attempts at the residual visual difference have each been a guess about
+-- which property differs: draw layer, anchor rect, texture coordinates.  Print
+-- them all side by side instead, with this addon's own copy marked, so the
+-- difference can be read off rather than inferred.
+local function Describe(region, mine)
+    local kind = "?"
+    if region.GetObjectType then
+        local ok, value = pcall(region.GetObjectType, region)
+        if ok then kind = value end
+    end
+    if kind ~= "Texture" then return end
+
+    local layer, sublevel = "?", "?"
+    if region.GetDrawLayer then
+        local ok, l, sl = pcall(region.GetDrawLayer, region)
+        if ok then layer, sublevel = tostring(l), tostring(sl) end
+    end
+    local w, h = 0, 0
+    if region.GetSize then
+        local ok, rw, rh = pcall(region.GetSize, region)
+        if ok then w, h = rw or 0, rh or 0 end
+    end
+    local texture = "none"
+    if region.GetTexture then
+        local ok, value = pcall(region.GetTexture, region)
+        if ok and value then texture = tostring(value) end
+    end
+    local coords = "?"
+    if region.GetTexCoord then
+        local ok, a, b, c, d = pcall(region.GetTexCoord, region)
+        if ok and a then coords = string.format("%.3f %.3f %.3f %.3f", a, b, c, d) end
+    end
+    local alpha, shown, desaturated = "?", "?", "?"
+    if region.GetAlpha then
+        local ok, value = pcall(region.GetAlpha, region)
+        if ok then alpha = string.format("%.2f", value or 1) end
+    end
+    if region.IsShown then
+        local ok, value = pcall(region.IsShown, region)
+        if ok then shown = tostring(value) end
+    end
+    if region.IsDesaturated then
+        local ok, value = pcall(region.IsDesaturated, region)
+        if ok then desaturated = tostring(value) end
+    end
+
+    print(("%s%s %s.%s  %.0fx%.0f  shown=%s alpha=%s desat=%s")
+        :format(mine and "|cff00ff00>> OURS|r " or "   ", kind, layer, sublevel, w, h, shown, alpha, desaturated))
+    print(("      texcoord %s   texture %s"):format(coords, texture))
+end
+
+function addon:PrintIconDump()
+    local frame
+    for f in pairs(scourgeOverlays) do frame = f break end
+    if not frame then
+        print("|cffcc0000DK Force:|r No tracked Scourge Strike button. Use Rescan Bars first.")
+        return
+    end
+    local label = "?"
+    if frame.GetDebugName then
+        local ok, name = pcall(frame.GetDebugName, frame)
+        if ok then label = name end
+    end
+    print("|cffcc0000DK Force:|r Textures on " .. tostring(label) .. ":")
+    local ours = frame._dkfDimTexture
+    if frame.GetRegions then
+        local ok, list = pcall(function() return { frame:GetRegions() } end)
+        if ok then
+            for _, region in ipairs(list) do Describe(region, region == ours) end
+        end
+    end
+end
