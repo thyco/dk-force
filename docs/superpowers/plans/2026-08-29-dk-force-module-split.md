@@ -34,7 +34,7 @@ Shared glow infrastructure, moved first because every feature module depends on 
 
 **Files:**
 - Create: `DKForce/Glow.lua`
-- Modify: `DKForce/Core.lua` (remove lines 64–102, 169–181, 240–263; update 6 call sites)
+- Modify: `DKForce/Core.lua` (remove lines 64–102, 169–174, 240–263; update 6 call sites)
 - Modify: `DKForce/DKForce.toc`
 
 **Interfaces:**
@@ -54,7 +54,13 @@ local LCG = LibStub and LibStub("LibCustomGlow-1.0", true)
 
 Cut from `Core.lua` and paste into `Glow.lua`, in this order and unmodified:
 - lines 64–102: the `addon.GLOW_TYPES = { ... }` table with its leading comment block, and the `addon.GLOW_TYPE_MAP` loop that follows it
-- lines 169–181: the `-- The `or` fallback is why...` comment and `function addon:GetGlowTypeByID(id)`
+- lines 169–174: the `-- The `or` fallback is why...` comment and `function addon:GetGlowTypeByID(id)`
+
+**Stop at line 174.** Lines 176–181 are the shared declaration block
+(`festeringOverlays`, `cdmFesteringOverlays`, `suddenDoomOverlays`,
+`cdmSuddenDoomOverlays`, `bloodDnDBuffFrame`, `suddenDoomActive`). Those stay
+in `Core.lua` for now; Tasks 2, 3 and 4 each claim their own. Moving them here
+would leave those tasks nothing to move and break every feature.
 
 - [ ] **Step 3: Move `CreateOverlay` and promote it to a method**
 

@@ -46,7 +46,8 @@ contract; the authority is the named definition.
 | 1–62 | `LCG`, `addon.SPELLS` | `Core.lua` |
 | 64–102 | `GLOW_TYPES`, `GLOW_TYPE_MAP` | `Glow.lua` |
 | 103–168 | `DEFAULT_GLOW_SETTINGS`, `DEFAULT_DB` | `Core.lua` |
-| 169–181 | `GetGlowTypeByID` | `Glow.lua` |
+| 169–174 | `GetGlowTypeByID` | `Glow.lua` |
+| 176–181 | shared declaration block | split across `Festering.lua`, `SuddenDoom.lua`, `BloodDnD.lua` |
 | 183–196 | `GetActiveSpecID`, `IsBloodSpec`, `IsUnholySpec` | `Core.lua` |
 | 198–221 | `BLIGHTFALL_TALENT_ID`, `IsBlightfallTalented`, `SOUL_REAPER_TALENT_ID`, `IsSoulReaperTalented` | `Blightfall.lua` |
 | 223–238 | `GetSuddenDoomOverlaySettings`, `SuddenDoomEnabled` | `SuddenDoom.lua` |
