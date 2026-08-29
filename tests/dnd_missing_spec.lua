@@ -5,7 +5,7 @@
 -- every .lua under DKForce/ appear in that TOC.  Keeping it here means it can
 -- never load in game.
 --
--- It slices the real subsystem out of Core.lua and runs it under desktop Lua
+-- It slices the real subsystem out of BloodDnD.lua and runs it under desktop Lua
 -- with the WoW API stubbed, so it exercises the shipped code rather than a
 -- retyped copy of it.  The slice is bounded by the same two markers verify.sh
 -- used for its md5 check -- the header comment and the first line that is
@@ -16,7 +16,7 @@
 -- had to be re-blessed on every intentional edit.  This proves the reminder
 -- still makes the right glow decisions, and survives refactors.
 
-local SOURCE = os.getenv("DKFORCE_DND_SOURCE") or "DKForce/Core.lua"
+local SOURCE = os.getenv("DKFORCE_DND_SOURCE") or "DKForce/BloodDnD.lua"
 local HEADER = "-- Death and Decay Buff Reminder (Blood)"
 
 local failures, checks = 0, 0
