@@ -71,6 +71,17 @@ local function Probe(label, fn)
             rec.values = rec.values or {}
             local key = tostring(value)
             rec.values[key] = (rec.values[key] or 0) + 1
+            -- The decisive statistic: how many ticks in a ROW.  A global
+            -- cooldown is ~15 ticks; Dark Transformation's is ~600.  Totals
+            -- cannot tell those apart, run length can -- and it decides whether
+            -- this signal is usable or would grey the button on every press.
+            if key == rec.runKey then
+                rec.run = (rec.run or 0) + 1
+            else
+                rec.runKey, rec.run = key, 1
+            end
+            rec.maxRun = rec.maxRun or {}
+            rec.maxRun[key] = math.max(rec.maxRun[key] or 0, rec.run)
         end
     else
         rec.err = rec.err + 1
@@ -370,6 +381,12 @@ function addon:PrintPutrefyDiagnostic()
             for v, n in pairs(r.values) do parts[#parts + 1] = ("%s:%d"):format(v, n) end
             table.sort(parts)
             say("        in combat: " .. table.concat(parts, " "))
+            if r.maxRun then
+                local runs = {}
+                for v, n in pairs(r.maxRun) do runs[#runs + 1] = ("%s:%d"):format(v, n) end
+                table.sort(runs)
+                say("        longest run (ticks): " .. table.concat(runs, " "))
+            end
         end
         if r.error then say(("        ERR: %s"):format(r.error:sub(1, 70))) end
     end
