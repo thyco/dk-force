@@ -17,8 +17,10 @@ Libs/LibCustomGlow-1.0/LibCustomGlow-1.0.lua
 
 Core.lua
 Glow.lua
+Dim.lua
 Festering.lua
 ScourgeDim.lua
+Putrefy.lua
 SuddenDoom.lua
 BloodDnD.lua
 Blightfall.lua

@@ -94,41 +94,62 @@ function addon:ResetSpellLookups()
     overrideLookup = nil
 end
 
-local function GetButtonSpellID(button)
-    if not button then return nil end
+-- Resolving which action slot a button is showing is needed twice -- once for
+-- the spell it will cast, once for the macro body behind it -- so it is its own
+-- function rather than being duplicated.  Third-party bars each stash the slot
+-- somewhere different, which is why there are four attempts.
+local GetButtonActionSlot
 
-    local actionSlot = nil
+-- Public so the diagnostic resolves the slot the SAME way the scan does.  Its
+-- first attempt at this kept a partial copy of the four fallbacks, in a
+-- different order, and therefore read a different action than the scanner --
+-- reporting nil macro bodies for buttons the scanner reads fine.  An instrument
+-- that does not walk the same path as the code it measures reports its own bugs.
+function addon:GetButtonActionSlot(button)
+    return GetButtonActionSlot(button)
+end
+
+function GetButtonActionSlot(button)
+    if not button then return nil end
 
     if button.GetAction then
         local success, action = pcall(button.GetAction, button)
-        if success and action and type(action) == "number" then
-            actionSlot = action
-        end
+        if success and type(action) == "number" then return action end
     end
-
-    if not actionSlot and button._state_action and type(button._state_action) == "number" then
-        actionSlot = button._state_action
+    if button._state_action and type(button._state_action) == "number" then
+        return button._state_action
     end
-
-    if not actionSlot and button.action and type(button.action) == "number" then
-        actionSlot = button.action
+    if button.action and type(button.action) == "number" then
+        return button.action
     end
-
     -- Secure third-party bars (including EllesmereUI) commonly store their
     -- active slot in the standard action attribute instead of button.action.
-    if not actionSlot and button.GetAttribute then
+    if button.GetAttribute then
         local ok, action = pcall(button.GetAttribute, button, "action")
-        if ok and type(action) == "number" then
-            actionSlot = action
-        end
+        if ok and type(action) == "number" then return action end
     end
+    return nil
+end
 
+-- Public because Putrefy calls it per tracked button per tick: for a macro slot
+-- GetMacroSpell returns the spell the /castsequence is CURRENTLY on, which is
+-- precisely "what will this button cast if I press it now".
+function addon:GetButtonSpellID(button)
+    if not button then return nil end
+    local actionSlot = GetButtonActionSlot(button)
     if actionSlot then
-        local success, aType, aId = pcall(GetActionInfo, actionSlot)
+        local success, aType, aId, aSub = pcall(GetActionInfo, actionSlot)
         if success and aType then
             if aType == "spell" then
                 return aId
             elseif aType == "macro" and aId then
+                -- A macro that RESOLVES reports what it resolved to, and
+                -- `subType` says which kind.  For "spell" that id is already
+                -- the answer to "what will this cast if pressed now" -- the
+                -- sequence's current step -- and no macro lookup is needed.
+                -- Asking GetMacroSpell for it instead returns nil, because it
+                -- is a spell id and not a macro index.  See GetMacroBodyForSlot.
+                if aSub == "spell" then return aId end
                 local success2, spellID = pcall(GetMacroSpell, aId)
                 if success2 and spellID then return spellID end
                 local tex = nil
@@ -153,36 +174,68 @@ local function GetButtonSpellID(button)
     return nil
 end
 
-local function ScanActionBars()
-    local results = {}
-    local function CheckButton(button)
-        if button and button.IsVisible and button:IsVisible() then
-            local width, height = button:GetSize()
-            if width and height and width > 1 and height > 1 then
-                local spellID = GetButtonSpellID(button)
-                if spellID then
-                    local baseID = addon:ResolveBaseSpellID(spellID)
-                    for _, spell in pairs(addon.SPELLS or {}) do
-                        if spell.key and (spellID == spell.id or baseID == spell.id) then
-                            results[spell.key] = results[spell.key] or {}
-                            local found = false
-                            for _, existing in ipairs(results[spell.key]) do
-                                if existing == button then found = true ; break end
-                            end
-                            if not found then
-                                table.insert(results[spell.key], button)
-                            end
-                        end
-                    end
-                end
-            end
+-- Reading a macro's body is not as simple as GetActionInfo suggests.
+--
+-- Its second return is the macro INDEX only for a macro that currently resolves
+-- to nothing.  For one that resolves -- which a /castsequence always does -- it
+-- is the id of the resolved spell, item or mount, and `subType` says which.
+-- Confirmed in game on 2026-08-30: a slot holding a Dark Transformation ->
+-- Putrefy castsequence answered `macro, 1233448, "spell"`, 1233448 being Dark
+-- Transformation, the step the sequence was on.  GetMacroBody has no macro at
+-- that index, returns nil, and every match fails silently -- which is exactly
+-- how this feature shipped unable to find the one button it exists for.
+--
+-- The macro's NAME is the stable handle: it does not change as the sequence
+-- advances, which is the property the whole design needed and did not have.
+-- Resolve name -> index -> body, and keep the id path as the fallback for the
+-- ordinary macros where it genuinely is an index.
+local function GetMacroBodyForSlot(actionSlot)
+    local okText, name = pcall(GetActionText, actionSlot)
+    if okText and name and name ~= "" then
+        local okIndex, index = pcall(GetMacroIndexByName, name)
+        if okIndex and index and index > 0 then
+            local okBody, body = pcall(GetMacroBody, index)
+            if okBody and body then return body end
         end
     end
-
-    for _, name in ipairs(BUTTON_NAMES) do
-        CheckButton(_G[name])
+    local okInfo, _, aId = pcall(GetActionInfo, actionSlot)
+    if okInfo and aId then
+        local okBody, body = pcall(GetMacroBody, aId)
+        if okBody and body then return body end
     end
+    return nil
+end
 
+-- Spell-ID matching cannot find a /castsequence button reliably: the reported
+-- spell is whichever step the sequence is on, and the scan runs at login.  So
+-- also match the macro's TEXT against spells that opt in with `macroMatch`.
+-- Only Putrefy opts in; Dark Transformation must not, or one button would be
+-- tracked under two keys and decorated twice.
+function addon:GetButtonMacroKeys(button)
+    local keys = {}
+    local actionSlot = GetButtonActionSlot(button)
+    if not actionSlot then return keys end
+    local ok, aType = pcall(GetActionInfo, actionSlot)
+    if not (ok and aType == "macro") then return keys end
+    local body = GetMacroBodyForSlot(actionSlot)
+    if not body then return keys end
+    local lowered = body:lower()
+    for _, spell in pairs(addon.SPELLS or {}) do
+        if spell.key and spell.macroMatch and lowered:find(spell.macroMatch, 1, true) then
+            keys[spell.key] = true
+        end
+    end
+    return keys
+end
+
+-- Public so the Putrefy diagnostic walks exactly the same buttons this scan
+-- does.  A diagnostic with its own copy of the iteration could drift from the
+-- scanner and would then be unable to explain why the scanner missed a button --
+-- which is the only question it exists to answer.
+function addon:ForEachActionButton(fn)
+    for _, name in ipairs(BUTTON_NAMES) do
+        if _G[name] then fn(_G[name], name) end
+    end
     -- UI packs can move or rename Blizzard action buttons.  The Blizzard
     -- action-button registry keeps the real button references, so scan it in
     -- addition to the familiar global names above.
@@ -190,9 +243,43 @@ local function ScanActionBars()
     if registered then
         for key, value in pairs(registered) do
             local button = type(key) == "table" and key or value
-            CheckButton(button)
+            if button then fn(button, "registry") end
         end
     end
+end
+
+local function ScanActionBars()
+    local results = {}
+
+    local function Track(key, button)
+        results[key] = results[key] or {}
+        for _, existing in ipairs(results[key]) do
+            if existing == button then return end
+        end
+        table.insert(results[key], button)
+    end
+
+    local function CheckButton(button)
+        if button and button.IsVisible and button:IsVisible() then
+            local width, height = button:GetSize()
+            if width and height and width > 1 and height > 1 then
+                local spellID = addon:GetButtonSpellID(button)
+                if spellID then
+                    local baseID = addon:ResolveBaseSpellID(spellID)
+                    for _, spell in pairs(addon.SPELLS or {}) do
+                        if spell.key and (spellID == spell.id or baseID == spell.id) then
+                            Track(spell.key, button)
+                        end
+                    end
+                end
+                for key in pairs(addon:GetButtonMacroKeys(button)) do
+                    Track(key, button)
+                end
+            end
+        end
+    end
+
+    addon:ForEachActionButton(CheckButton)
     return results
 end
 
@@ -202,6 +289,7 @@ function addon:ScanAllButtons()
     if addon.CreateSuddenDoomOverlays then addon:CreateSuddenDoomOverlays() end
     if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
     if addon.CreateScourgeOverlays then addon:CreateScourgeOverlays() end
+    if addon.CreatePutrefyOverlays then addon:CreatePutrefyOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
 end

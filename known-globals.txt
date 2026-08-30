@@ -24,10 +24,15 @@ FindSpellOverrideByID
 GameTooltip
 GameTooltip_Hide
 GetActionInfo
+GetActionText
 GetCursorPosition
+GetMacroBody
+GetMacroIndexByName
 GetMacroSpell
 GetSpecialization
 GetSpecializationInfo
+GetSpellBaseCooldown
+GetSpellCooldown
 GetTime
 InCombatLockdown
 IsAddOnLoaded

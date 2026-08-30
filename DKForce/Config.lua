@@ -7,6 +7,7 @@ local addonName, addon = ...
 local PAGE_ITEMS = {
     { text = "Festering Scythe",         value = "festering" },
     { text = "Sudden Doom",              value = "suddendoom" },
+    { text = "Putrefy",                  value = "putrefy" },
     { text = "Blightfall & Soul Reaper", value = "blightfall" },
     { text = "Stand In Death and Decay", value = "blooddndmissing" },
 }
@@ -390,6 +391,10 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetPoint("LEFT", rescanButton, "RIGHT", 8, 0)
     testButton:SetText("Test")
 
+    -- Forward-declared: RefreshPreview reads it, but the mapping itself is
+    -- defined below the pages that need to close over it.
+    local GlowSettingsFor
+
     local function StopPreview(page)
         if not page then return end
         for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
@@ -404,17 +409,19 @@ function addon:CreateConfigPanel(standalone)
         if selectedKey == "suddendoom" and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
         if selectedKey == "blooddndmissing" and addon.RefreshDnDMissingGlows then addon:RefreshDnDMissingGlows() end
         if selectedKey == "blightfall" and addon.RefreshBlightfallTracker then addon:RefreshBlightfallTracker() end
+        -- RefreshPutrefyCues only Shows; a frame already _glowActive would keep
+        -- its old colour without the Stop first, the same trap
+        -- RefreshFesteringGlowStyle exists to escape for Festering.
+        if selectedKey == "putrefy" and addon.RefreshPutrefyCues then
+            addon:StopPutrefyCues(); addon:RefreshPutrefyCues()
+        end
     end
 
     local function RefreshPreview(page)
         StopPreview(page)
         if not page then return end
         if page.previewIcon then page.previewIcon:Show() end
-        local settings
-        if selectedKey == "festering" then settings = DKForceDB.spells.festeringScythe
-        elseif selectedKey == "suddendoom" then settings = DKForceDB.suddenDoomGlow end
-        if selectedKey == "blooddndmissing" then settings = DKForceDB.bloodDndMissing end
-        if selectedKey == "blightfall" then settings = DKForceDB.blightfallChain end
+        local settings = GlowSettingsFor(selectedKey)
         if not settings or not settings.enabled then return end
         local target = page.previewIcon
         local glowType = addon:GetGlowTypeByID(settings.glowType)
@@ -446,11 +453,12 @@ function addon:CreateConfigPanel(standalone)
         page[fieldName or "selector"] = selector
     end
 
-    local function GlowSettingsFor(key)
+    function GlowSettingsFor(key)
         if key == "festering" then return DKForceDB.spells.festeringScythe end
         if key == "suddendoom" then return DKForceDB.suddenDoomGlow end
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
         if key == "blightfall" then return DKForceDB.blightfallChain end
+        if key == "putrefy" then return DKForceDB.putrefy end
     end
 
     -- Colour is the only glow setting left, so this is the whole appearance
@@ -591,6 +599,59 @@ function addon:CreateConfigPanel(standalone)
         pages.suddendoom = page
     end
 
+    local function BuildPutrefyPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "glow"
+        page.settingsCard = CreateCard(page, "Putrefy")
+        page.previewCard = CreateCard(page, "Live Preview")
+        page.appearanceCard = CreateCard(page, "Glow Colour")
+        AddSelector(page, page.settingsCard)
+        local function settings() return DKForceDB.putrefy end
+        local function changed()
+            -- Stop first: Show alone will not repaint a frame that is already
+            -- glowing, so enable/glow/dim must clear it before reapplying.
+            if addon.RefreshPutrefyCues then addon:StopPutrefyCues(); addon:RefreshPutrefyCues() end
+            RefreshPreview(page)
+        end
+        page.enable = CreateCheck(page.settingsCard, "Enable the Putrefy cue", 14, -76,
+            function() return settings().enabled end,
+            function(value)
+                settings().enabled = value
+                -- Only the Cooldown Manager rows are gated on this switch --
+                -- CDMHook checks it before registering.  CreatePutrefyOverlays
+                -- builds the bar copies unconditionally, unlike
+                -- CreateDnDMissingOverlays, so this rescan is not what gates
+                -- them; it is here to pick up a macro that newly qualifies.
+                if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
+                if addon.ScanAllButtons then addon:ScanAllButtons() end
+                changed()
+            end)
+        page.glow = CreateCheck(page.settingsCard, "Glow while Dark Transformation is up", 14, -102,
+            function() return settings().glow end,
+            function(value) settings().glow = value; changed() end)
+        page.dim = CreateCheck(page.settingsCard, "Desaturate while it is not", 14, -128,
+            function() return settings().dim end,
+            function(value) settings().dim = value; changed() end)
+        BuildColorCard(page, page.appearanceCard, "putrefy")
+        -- settingsCard is only 198px tall in the glow layout, too short for this
+        -- wrapped hint; appearanceCard is the full-width lower card with room,
+        -- the same place blooddndmissing's equally long hint lives.
+        page.hint = CreateText(page.appearanceCard,
+            "Unholy, in combat for the glow.  Requires Dark Transformation as a tracked BUFF in "
+            .. "the Cooldown Manager: its icon is how the cue knows the window is open.  A "
+            .. "castsequence macro is matched by its text, so the button is found whichever "
+            .. "step the sequence is on.",
+            14, -120, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+        page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.PUTREFY.id)
+        page.refresh = function()
+            page.selector.refresh()
+            page.enable.refresh(); page.glow.refresh(); page.dim.refresh()
+            page.refreshColor()
+            RefreshPreview(page)
+        end
+        pages.putrefy = page
+    end
+
     local function BuildBlightfallPage()
         local page = CreateFrame("Frame", nil, pageHolder)
         page:SetAllPoints(); page.layoutKind = "blightfall"
@@ -644,6 +705,7 @@ function addon:CreateConfigPanel(standalone)
 
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
     BuildSuddenDoomPage()
+    BuildPutrefyPage()
     BuildGlowPage("blooddndmissing", "Blood - Stand In Death and Decay", addon.SPELLS.DEATH_AND_DECAY.id)
     BuildBlightfallPage()
 
@@ -902,6 +964,7 @@ function addon:CreateConfigPanel(standalone)
         if testActive then
             if selectedKey == "festering" then addon:TestFesteringGlow(); addon:TestScourgeDim()
             elseif selectedKey == "suddendoom" then addon:TestSuddenDoomGlow()
+            elseif selectedKey == "putrefy" then addon:TestPutrefyCue()
             elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
             elseif selectedKey == "blightfall" then addon:TestBlightfallTracker() end
             testButton:SetText("Stop Test")

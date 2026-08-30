@@ -22,6 +22,13 @@ local LESSER_GHOUL_SPELL_ID = 1254252
 local SCOURGE_STRIKE_SPELL_ID = 55090
 local DEATH_AND_DECAY_SPELL_ID = 43265
 local DEATH_AND_DECAY_BUFF_ID = 188290
+local PUTREFY_SPELL_ID = 1247378
+-- The Dark Transformation BUFF row reports the ABILITY id, not an aura id, so
+-- an ability row would report the same value -- exactly the situation Death and
+-- Decay is in, and why IsBuffViewerItem exists.  Confirmed against /dkf cdm:
+-- `BuffIcon cooldownID=1233448 shown=false Dark Transformation`, shown=true
+-- while the buff is up.
+local DARK_TRANSFORMATION_SPELL_ID = 1233448
 local hooked = false
 
 local function GetCDMSpellID(item)
@@ -78,7 +85,7 @@ end
 local function AnyFeatureWantsCDM()
     return addon:IsFesteringEnabled() or addon:IsSuddenDoomEnabled()
         or LesserGhoulEnabled() or addon:IsDnDMissingEnabled()
-        or addon:IsScourgeDimEnabled()
+        or addon:IsScourgeDimEnabled() or addon:IsPutrefyEnabled()
 end
 
 -- One classifier and one dispatcher for both discovery paths.
@@ -103,6 +110,15 @@ local function Classify(spellID, itemSpellID, item)
         return "lesserGhoul"
     elseif IsScourgeItem(spellID) then
         return "scourge"
+    elseif addon:IsPutrefyEnabled() and spellID == PUTREFY_SPELL_ID then
+        return "putrefy"
+    elseif addon:IsPutrefyEnabled()
+        and (spellID == DARK_TRANSFORMATION_SPELL_ID
+             or itemSpellID == DARK_TRANSFORMATION_SPELL_ID)
+        and IsBuffViewerItem(item) then
+        -- Only the buff row is wanted.  An ability row reports the same id, so
+        -- viewer ownership is the only thing that tells them apart.
+        return "darkTransformationBuff"
     elseif addon:IsDnDMissingEnabled()
         and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
             or itemSpellID == DEATH_AND_DECAY_BUFF_ID) then
@@ -121,6 +137,8 @@ local DISPATCH = {
     scourge     = function(item) addon:RegisterCDMScourgeFrame(item) end,
     bloodDndAbility = function(item) addon:RegisterCDMDnDMissingFrame(item) end,
     bloodDndBuff    = function(item) addon:RegisterCDMDnDBuffFrame(item) end,
+    putrefy = function(item) addon:RegisterCDMPutrefyFrame(item) end,
+    darkTransformationBuff = function(item) addon:RegisterCDMDarkTransformationBuffFrame(item) end,
 }
 
 local function Register(item, resolve)
@@ -251,6 +269,7 @@ function addon:PrintCDMDump()
     }
     print("|cffcc0000DK Force:|r Cooldown Manager items:")
     print("  Sudden Doom decorates the Death Coil and Epidemic icons below.")
+    print("  Putrefy needs its own icon here, plus Dark Transformation as a tracked BUFF.")
     local total = 0
     for _, viewer in ipairs(viewers) do
         local pool = viewer.frame and viewer.frame.itemFramePool

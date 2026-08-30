@@ -153,15 +153,30 @@ end
 -- gone hidden since the last call.  Only the Death and Decay reminder does
 -- this, because only it calls Show on a timer while the reminder is up rather
 -- than once when the reminder starts.
-function GlowGroup:Show()
+--
+-- `shouldDecorate` is nil for "all", which is what every caller that decides
+-- once and applies it everywhere passes.  Putrefy passes a real predicate: its
+-- action-bar button and its Cooldown Manager icon show different spells, so
+-- they get different answers in the same tick.  A rejected frame is cleared,
+-- not merely skipped -- the caller is driving per-frame state and expects the
+-- decoration to come off.
+--
+-- Asymmetric with DimGroup:Show by design: this short-circuits on `visible`
+-- before the predicate is ever called, so an invisible target's predicate
+-- answer is never asked for.  DimGroup:Show calls its predicate unconditionally
+-- and defers the visibility check to ApplyDim.  Putrefy's memoised `decide`
+-- depends on tolerating both -- see case 14b in putrefy_spec.lua.
+function GlowGroup:Show(shouldDecorate)
     local applied = 0
     self:ForEach(function(overlay)
         local target = overlay._targetFrame
-        if target and target:IsVisible() then
+        local visible = target and target:IsVisible()
+        local wanted = visible and (shouldDecorate == nil or shouldDecorate(target))
+        if wanted then
             overlay:Show()
             self:StartGlow(overlay)
             applied = applied + 1
-        elseif self._clearHiddenTargets then
+        elseif self._clearHiddenTargets or shouldDecorate ~= nil then
             self:StopGlow(overlay)
             overlay:Hide()
         end

@@ -18,6 +18,7 @@
 -- and grace-period logic that runs in game rather than on a retyped copy.
 
 local W = {}
+local unpack = unpack or table.unpack
 
 -- ---------------------------------------------------------------
 -- Frames.  Visibility is modelled properly -- IsVisible() walks the parent
@@ -59,6 +60,51 @@ function frameMeta:SetScript(which, fn)
     if which == "OnUpdate" then onUpdateScripts[#onUpdateScripts + 1] = { frame = self, fn = fn } end
 end
 function frameMeta:GetScript(which) return self._scripts[which] end
+-- No-op: nothing in these specs drives WoW events, only OnUpdate/C_Timer/direct
+-- calls, so there is nothing for a fake event system to dispatch.
+function frameMeta:RegisterEvent() end
+function frameMeta:UnregisterEvent() end
+
+-- Textures.  The desaturation draws a copy of the button's icon as a texture ON
+-- the button rather than as a child frame, so a spec that cannot see textures
+-- cannot see that feature at all.
+local textureMeta = {}
+textureMeta.__index = textureMeta
+
+function textureMeta:Show() self._shown = true end
+function textureMeta:Hide() self._shown = false end
+function textureMeta:IsShown() return self._shown and true or false end
+function textureMeta:SetAllPoints(target) self._anchoredTo = target end
+function textureMeta:SetTexture(texture) self._texture = texture end
+function textureMeta:GetTexture() return self._texture end
+function textureMeta:SetColorTexture(r, g, b, a) self._texture = nil; self._color = { r, g, b, a } end
+function textureMeta:SetDesaturated(value) self._desaturated = value and true or false end
+function textureMeta:SetTexCoord(...) self._texCoord = { ... } end
+function textureMeta:GetTexCoord() return unpack(self._texCoord or { 0, 0, 0, 1, 1, 0, 1, 1 }) end
+function textureMeta:SetVertexColor(r, g, b, a) self._vertexColor = { r, g, b, a } end
+function textureMeta:GetVertexColor() return unpack(self._vertexColor or { 1, 1, 1, 1 }) end
+function textureMeta:SetAlpha(a) self._alpha = a end
+function textureMeta:GetAlpha() return self._alpha or 1 end
+function textureMeta:GetDrawLayer() return self._layer, self._sublevel end
+function textureMeta:AddMaskTexture(mask) self._masks[#self._masks + 1] = mask end
+function textureMeta:GetNumMaskTextures() return #self._masks end
+function textureMeta:GetMaskTexture(index) return self._masks[index] end
+function textureMeta:GetObjectType() return "Texture" end
+
+local function newTexture(parent, layer, sublevel)
+    return setmetatable({
+        _shown = true, _parent = parent,
+        _layer = layer or "ARTWORK", _sublevel = sublevel or 0,
+        _masks = {},
+    }, textureMeta)
+end
+W.newTexture = newTexture
+
+function frameMeta:CreateTexture(_, layer, _, sublevel)
+    local tex = newTexture(self, layer, sublevel)
+    self._textures[#self._textures + 1] = tex
+    return tex
+end
 
 local function newFrame(parent, objectType)
     return setmetatable({
@@ -67,18 +113,39 @@ local function newFrame(parent, objectType)
         _strata  = (parent and parent._strata) or "MEDIUM",
         _level   = (parent and parent._level or 0) + 1,
         _scripts = {},
+        _textures = {},
         _objectType = objectType or "Frame",
     }, frameMeta)
 end
 
 W.newFrame = newFrame
 
--- A stand-in for an action button or a Cooldown Manager item: a top-level frame
--- carrying an `Icon` texture, which is what CreateOverlay anchors to.
-function W.newButton()
+-- A stand-in for an action button or a Cooldown Manager item.  Its icon carries
+-- art, a crop and two mask textures, because the desaturated copy is required
+-- to inherit all three -- masks especially: Blizzard rounds icon corners with a
+-- MaskTexture, and a copy without them shows the raised bevel painted into
+-- every Interface\Icons file.
+function W.newButton(texture)
     local button = newFrame(nil, "Button")
-    button.Icon = newFrame(button, "Texture")
+    button.Icon = newTexture(button, "ARTWORK", 0)
+    button.Icon._texture = texture or "Interface\\Icons\\Spell_Test"
+    button.Icon._texCoord = { 0.08, 0.08, 0.08, 0.92, 0.92, 0.08, 0.92, 0.92 }
+    button.Icon._masks = { "mask-one", "mask-two" }
+    -- The cooldown swipe.  Its VISIBILITY is the only cooldown signal that
+    -- survives taint in combat -- every numeric read raises there -- so a spec
+    -- that cannot model it cannot cover the one usable path.
+    button.cooldown = newFrame(button)
+    button.cooldown._shown = false
     return button
+end
+
+-- The desaturated copies currently shown on a button.
+function W.dimTexturesOn(button)
+    local shown = {}
+    for _, tex in ipairs(button._textures or {}) do
+        if tex._shown and tex._desaturated then shown[#shown + 1] = tex end
+    end
+    return shown
 end
 
 -- Frames the addon itself created, as opposed to the buttons a spec hands it.
@@ -143,6 +210,12 @@ local function newTimer(delay, fn)
     return timer
 end
 
+-- Absolute time, for code that timestamps an event and measures from it.
+-- Arithmetic on a number the addon owns is never secret, which is the whole
+-- reason a feature would track a cooldown itself.
+W.now = 10000
+function GetTime() return W.now end
+
 -- Advance the clock. `step` defaults to a tenth of a second because that is the
 -- real poll interval of every watcher here; a spec that wants to prove a
 -- sub-poll tick accumulates rather than evaluates passes a smaller one.
@@ -152,6 +225,7 @@ function W.advance(seconds, step)
     while remaining > 1e-9 do
         local dt = math.min(step, remaining)
         remaining = remaining - dt
+        W.now = W.now + dt
 
         for _, entry in ipairs(onUpdateScripts) do
             entry.fn(entry.frame, dt)

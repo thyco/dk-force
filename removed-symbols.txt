@@ -2,17 +2,12 @@
 runicPower
 AttachCrossToOverlay
 UpdateCrossAppearance
-CreatePutrefyOverlays
-RegisterCDMPutrefyFrame
 ShowPutrefyHoldWarning
 RefreshPutrefyWarnings
 TestPutrefyWarning
 OnDarkTransformationCast
 RefreshDarkTransformationWindow
 OnDarkTransformationExtended
-putrefyOverlays
-cdmPutrefyOverlays
-BuildPutrefyPage
 _StopPutrefyOverlay
 StopPutrefyWarning
 ShowPutrefyWarning
@@ -20,7 +15,6 @@ PUTREFY_WARNING_TYPES
 PUTREFY_WARNING_TYPE_MAP
 DEFAULT_PUTREFY_SETTINGS
 trackCDMPutrefy
-PUTREFY_SPELL_ID
 putrefyWarningActive
 putrefyWarningTimer
 putrefyDurationTimer
