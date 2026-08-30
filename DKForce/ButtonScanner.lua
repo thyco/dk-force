@@ -178,6 +178,26 @@ function addon:GetButtonMacroKeys(button)
     return keys
 end
 
+-- Public so the Putrefy diagnostic walks exactly the same buttons this scan
+-- does.  A diagnostic with its own copy of the iteration could drift from the
+-- scanner and would then be unable to explain why the scanner missed a button --
+-- which is the only question it exists to answer.
+function addon:ForEachActionButton(fn)
+    for _, name in ipairs(BUTTON_NAMES) do
+        if _G[name] then fn(_G[name], name) end
+    end
+    -- UI packs can move or rename Blizzard action buttons.  The Blizzard
+    -- action-button registry keeps the real button references, so scan it in
+    -- addition to the familiar global names above.
+    local registered = ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.frames
+    if registered then
+        for key, value in pairs(registered) do
+            local button = type(key) == "table" and key or value
+            if button then fn(button, "registry") end
+        end
+    end
+end
+
 local function ScanActionBars()
     local results = {}
 
@@ -209,20 +229,7 @@ local function ScanActionBars()
         end
     end
 
-    for _, name in ipairs(BUTTON_NAMES) do
-        CheckButton(_G[name])
-    end
-
-    -- UI packs can move or rename Blizzard action buttons.  The Blizzard
-    -- action-button registry keeps the real button references, so scan it in
-    -- addition to the familiar global names above.
-    local registered = ActionBarButtonEventsFrame and ActionBarButtonEventsFrame.frames
-    if registered then
-        for key, value in pairs(registered) do
-            local button = type(key) == "table" and key or value
-            CheckButton(button)
-        end
-    end
+    addon:ForEachActionButton(CheckButton)
     return results
 end
 

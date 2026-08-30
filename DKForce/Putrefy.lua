@@ -206,3 +206,103 @@ putrefyWatcher:SetScript("OnUpdate", function(_, elapsed)
     putrefyElapsed = 0
     ApplyPutrefyCues()
 end)
+
+-- /dkf putrefy -- dump every boundary this cue depends on.
+--
+-- The cue crosses four systems that cannot be stubbed on the desktop: the
+-- action-bar scan, the macro body behind a /castsequence slot, the Cooldown
+-- Manager's item frames, and Blizzard's spell-usability API.  When it does not
+-- light up, the failure is silent at every one of those seams -- nothing errors,
+-- a frame simply never registers or a match simply never happens.  This prints
+-- what each seam actually produced, so the broken one can be read off instead of
+-- guessed at.  Run OUT of combat: the Cooldown Manager refuses some reads during
+-- it, exactly as /dkf cdm warns.
+function addon:PrintPutrefyDiagnostic()
+    local function say(...) print("  " .. table.concat({ ... }, " ")) end
+    print("|cffcc0000DK Force:|r Putrefy diagnostic")
+
+    local settings = PutrefySettings()
+    if not settings then
+        say("settings: MISSING -- DKForceDB.putrefy does not exist. Reload once.")
+        return
+    end
+    say(("settings: enabled=%s glow=%s dim=%s")
+        :format(tostring(settings.enabled), tostring(settings.glow), tostring(settings.dim)))
+    say(("state: testActive=%s cuesActive=%s inCombat=%s")
+        :format(tostring(putrefyTestActive), tostring(putrefyCuesActive), tostring(InCombatLockdown())))
+
+    -- Seam 1: did the action-bar scan find the macro button?
+    local tracked = (addon.trackedButtons or {}).putrefy or {}
+    say(("scan: trackedButtons.putrefy = %d button(s)"):format(#tracked))
+
+    -- Seam 2: what does every macro slot on the bars actually say?  This is the
+    -- one that answers "why was my macro not matched".
+    local macros = 0
+    addon:ForEachActionButton(function(button, name)
+        if not (button.IsVisible and button:IsVisible()) then return end
+        local spellID = addon:GetButtonSpellID(button)
+        local keys = addon:GetButtonMacroKeys(button)
+        local matched = keys.putrefy and "MATCHED" or "no"
+        -- Re-read the body here rather than trusting the matcher, so a nil body
+        -- is distinguishable from a body that simply did not contain the text.
+        local slot, body
+        if button.GetAttribute then
+            local ok, a = pcall(button.GetAttribute, button, "action")
+            if ok and type(a) == "number" then slot = a end
+        end
+        if not slot and type(button.action) == "number" then slot = button.action end
+        if slot then
+            local ok, aType, aId = pcall(GetActionInfo, slot)
+            if ok and aType == "macro" and aId then
+                macros = macros + 1
+                local okBody, text = pcall(GetMacroBody, aId)
+                body = okBody and text or nil
+                local firstLine = body and body:gsub("^%s+", ""):gsub("\n.*", "") or "<nil>"
+                say(("  macro %-14s slot=%-4s id=%-4s putrefy=%-8s spell=%-9s body=%q")
+                    :format(tostring(name), tostring(slot), tostring(aId), matched,
+                            tostring(spellID), firstLine:sub(1, 48)))
+            end
+        end
+    end)
+    if macros == 0 then
+        say("  no macro slots found on any visible action button")
+    end
+
+    -- Seam 3: what is actually decorated, and what did each frame decide?
+    local dtShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()
+    local dtReady = DarkTransformationReady()
+    say(("detection: dtBuffRow=%s dtBuffShown=%s dtReady=%s")
+        :format(darkTransformationBuffFrame and "registered" or "NOT REGISTERED",
+                tostring(dtShown), tostring(dtReady)))
+
+    -- The raw usability reads behind dtReady, so a false can be attributed.
+    local usable, noPower, cd = "?", "?", "?"
+    if C_Spell and C_Spell.IsSpellUsable then
+        local ok, u, p = pcall(C_Spell.IsSpellUsable, addon.SPELLS.DARK_TRANSFORMATION.id)
+        if ok then usable, noPower = tostring(u), tostring(p) end
+    end
+    if C_Spell and C_Spell.GetSpellCooldown then
+        local ok, info = pcall(C_Spell.GetSpellCooldown, addon.SPELLS.DARK_TRANSFORMATION.id)
+        if ok and info then cd = tostring(info.duration) end
+    end
+    say(("  dark transformation: usable=%s noPower=%s cooldown=%s"):format(usable, noPower, cd))
+
+    local function report(label, group, frameOf)
+        local n = 0
+        group:ForEach(function(entry)
+            n = n + 1
+            local frame = frameOf(entry)
+            local nextCast = NextCastFor(frame)
+            local glow, dim = addon:EvaluatePutrefyState(
+                settings, nextCast, dtShown, dtReady, InCombatLockdown())
+            say(("  %s #%d cdm=%-5s visible=%-5s nextCast=%-18s -> glow=%-5s dim=%s")
+                :format(label, n, tostring(cdmPutrefyFrames[frame] and true or false),
+                        tostring(frame and frame.IsVisible and frame:IsVisible()),
+                        tostring(nextCast), tostring(glow), tostring(dim)))
+        end)
+        if n == 0 then say(("  %s: NONE"):format(label)) end
+    end
+    say("decorations:")
+    report("glow", putrefyGlowGroup, function(overlay) return overlay._targetFrame end)
+    report("dim ", putrefyDimGroup, function(record) return record.frame end)
+end

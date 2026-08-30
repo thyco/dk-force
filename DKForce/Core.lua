@@ -447,6 +447,8 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:PrintBlightfallDiagnostic()
     elseif cmd == "cdm" then
         addon:PrintCDMDump()
+    elseif cmd == "putrefy" then
+        addon:PrintPutrefyDiagnostic()
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false
@@ -464,6 +466,7 @@ SlashCmdList["DKFORCE"] = function(msg)
             print("|cffcc0000DK Force:|r /dkf cdmscan - Rescan Cooldown Manager")
             print("|cffcc0000DK Force:|r /dkf debug - Toggle debug logging")
             print("|cffcc0000DK Force:|r /dkf blight - Blightfall prompt diagnostic")
+            print("|cffcc0000DK Force:|r /dkf putrefy - Putrefy cue diagnostic")
             print("|cffcc0000DK Force:|r /dkf minimap - Show Minimap button")
         end
     end
