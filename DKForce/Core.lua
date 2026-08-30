@@ -250,7 +250,6 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
             addon:OnFesteringScytheCast()
         end
         addon:OnBlightfallChainSpellCast(spellID)
-        addon:OnPutrefyCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
