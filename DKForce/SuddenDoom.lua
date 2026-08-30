@@ -1,62 +1,35 @@
 local addonName, addon = ...
 
-local suddenDoomOverlays   = {}
-local cdmSuddenDoomOverlays = {}
+-- The action-bar and Cooldown Manager overlays, and the create/show/hide
+-- mechanics they share with Festering and the Death and Decay reminder.  See
+-- Glow.lua; what stays here is the part that is actually about Sudden Doom.
+--
+-- One settings table for the whole feature: the same colour on Death Coil and
+-- Epidemic, on action bars and in the Cooldown Manager alike.  The per-spell
+-- tables that used to supply this are gone -- it is one proc, and colouring its
+-- two spenders differently was a setting nobody wanted.
+local suddenDoomGroup = addon:NewGlowGroup({
+    settings  = function() return DKForceDB and DKForceDB.suddenDoomGlow end,
+    spellKeys = { deathCoil = true, epidemic = true },
+})
 local suddenDoomActive = false
 
--- One table for the whole feature: the same colour on Death Coil and Epidemic,
--- on action bars and in the Cooldown Manager alike.  The per-spell tables that
--- used to supply this are gone -- it is one proc, and colouring its two spenders
--- differently was a setting nobody wanted.
-local function GetSuddenDoomOverlaySettings()
-    return DKForceDB.suddenDoomGlow
-end
-
--- Both tables, always.  Action bars and the Cooldown Manager are two views of
--- the same proc, not alternatives, which is how Stand In Death and Decay has
--- always behaved.
-local function ForEachOverlay(fn)
-    for _, overlay in pairs(suddenDoomOverlays)    do fn(overlay) end
-    for _, overlay in pairs(cdmSuddenDoomOverlays) do fn(overlay) end
-end
-
 -- The "Enable Sudden Doom glow" checkbox is the master switch for the feature.
-local function SuddenDoomEnabled()
-    local s = DKForceDB and DKForceDB.suddenDoomGlow
-    return (s and s.enabled) and true or false
-end
-
 -- CDMHook gates its registration on the same switch this file displays from.
 function addon:IsSuddenDoomEnabled()
-    return SuddenDoomEnabled()
+    return suddenDoomGroup:IsEnabled()
 end
 
 function addon:CreateSuddenDoomOverlays()
-    for _, overlay in pairs(suddenDoomOverlays) do
-        if overlay._glowActive then
-            local s = GetSuddenDoomOverlaySettings()
-            local gt = s and addon:GetGlowTypeByID(s.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-        end
-        overlay:Hide()
-        overlay:SetParent(nil)
-    end
-    wipe(suddenDoomOverlays)
-
-    for spellKey, buttons in pairs(addon.trackedButtons or {}) do
-        if spellKey == "deathCoil" or spellKey == "epidemic" then
-            for _, button in ipairs(buttons) do
-                suddenDoomOverlays[button] = addon:CreateOverlay(button, spellKey)
-            end
-        end
-    end
+    suddenDoomGroup:ClearBarOverlays()
+    suddenDoomGroup:BuildBarOverlays()
 end
 
 function addon:RegisterCDMSuddenDoomFrame(frame, spellKey)
-    if not addon:IsSuddenDoomEnabled() or cdmSuddenDoomOverlays[frame] then return end
-    local overlay = addon:CreateOverlay(frame, spellKey)
-    cdmSuddenDoomOverlays[frame] = overlay
-    if suddenDoomActive then addon:ShowSuddenDoomGlows() end
+    if not addon:IsSuddenDoomEnabled() then return end
+    if suddenDoomGroup:RegisterCDMFrame(frame, spellKey) and suddenDoomActive then
+        addon:ShowSuddenDoomGlows()
+    end
 end
 
 -- Sudden Doom is an aura, so track the aura itself instead of polling Death
@@ -88,59 +61,28 @@ end
 
 function addon:StopSuddenDoomGlows()
     suddenDoomActive = false
-    ForEachOverlay(function(overlay)
-        if overlay._glowActive then
-            local s = GetSuddenDoomOverlaySettings()
-            local gt = s and addon:GetGlowTypeByID(s.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-            overlay._glowActive = false
-        end
-        overlay:Hide()
-    end)
+    suddenDoomGroup:Hide()
 end
 
 function addon:ShowSuddenDoomGlows()
     suddenDoomActive = true
-    local masterEnabled = SuddenDoomEnabled()
-    ForEachOverlay(function(overlay)
-        local target = overlay._targetFrame
-        local s = GetSuddenDoomOverlaySettings()
-        if masterEnabled and target and target:IsVisible() and s and s.enabled then
-            overlay:Show()
-            if not overlay._glowActive then
-                local gt = addon:GetGlowTypeByID(s.glowType)
-                if gt and gt.start then
-                    local ok = pcall(gt.start, overlay, s)
-                    if ok then overlay._glowActive = true end
-                end
-            end
-        end
-    end)
+    if not suddenDoomGroup:IsEnabled() then return 0 end
+    return suddenDoomGroup:Show()
 end
 
 function addon:RefreshSuddenDoomGlows()
     if suddenDoomActive then
         addon:StopSuddenDoomGlows()
-        if SuddenDoomEnabled() and addon:IsSuddenDoomActive() then addon:ShowSuddenDoomGlows() end
+        if addon:IsSuddenDoomEnabled() and addon:IsSuddenDoomActive() then addon:ShowSuddenDoomGlows() end
     end
 end
 
 -- No per-spell filter: one colour covers both spenders, so a test lights every
--- Sudden Doom target there is.
+-- Sudden Doom target there is.  It does not set `suddenDoomActive`: a preview is
+-- not a proc, and the watcher must still be free to start and stop the real one.
 function addon:TestSuddenDoomGlow()
-    local shown = 0
-    if not SuddenDoomEnabled() then return shown end
-    ForEachOverlay(function(overlay)
-        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
-            local s = GetSuddenDoomOverlaySettings()
-            overlay:Show()
-            local gt = addon:GetGlowTypeByID(s.glowType)
-            if gt and gt.start then pcall(gt.start, overlay, s) end
-            overlay._glowActive = true
-            shown = shown + 1
-        end
-    end)
-    return shown
+    if not addon:IsSuddenDoomEnabled() then return 0 end
+    return suddenDoomGroup:Show()
 end
 
 -- Sudden Doom changes Death Coil's Runic Power cost.  Check only ten times

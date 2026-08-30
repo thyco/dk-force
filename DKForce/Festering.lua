@@ -1,41 +1,30 @@
 local addonName, addon = ...
 
-local festeringOverlays    = {}
-local cdmFesteringOverlays = {}
+-- The action-bar and Cooldown Manager overlays, and the create/show/hide
+-- mechanics they share with Sudden Doom and the Death and Decay reminder.  See
+-- Glow.lua; what stays here is the part that is actually about Festering.
+local festeringGroup = addon:NewGlowGroup({
+    settings  = function() return DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe end,
+    spellKeys = { festeringScythe = true },
+})
 
 function addon:CreateFesteringOverlays()
-    for _, overlay in pairs(festeringOverlays) do
-        if overlay._glowActive then
-            local gt = self:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-        end
-        overlay:Hide()
-        overlay:SetParent(nil)
-    end
-    wipe(festeringOverlays)
-
-    for spellKey, buttons in pairs(addon.trackedButtons or {}) do
-        if spellKey == "festeringScythe" then
-            for _, button in ipairs(buttons) do
-                festeringOverlays[button] = addon:CreateOverlay(button, spellKey)
-            end
-        end
-    end
+    festeringGroup:ClearBarOverlays()
+    festeringGroup:BuildBarOverlays()
 end
 
 -- Called by CDMHook.lua after Blizzard refreshes a specific Cooldown Manager
 -- item.  This avoids walking arbitrary UI frames (which taints in 12.1).
 -- CDMHook gates its registration on the same switch this file displays from.
 function addon:IsFesteringEnabled()
-    local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
-    return (settings and settings.enabled) and true or false
+    return festeringGroup:IsEnabled()
 end
 
 function addon:RegisterCDMFesteringFrame(frame)
-    if not addon:IsFesteringEnabled() or cdmFesteringOverlays[frame] then return end
-    local overlay = addon:CreateOverlay(frame, "festeringScythe")
-    cdmFesteringOverlays[frame] = overlay
-    addon:RefreshFesteringGlows()
+    if not addon:IsFesteringEnabled() then return end
+    if festeringGroup:RegisterCDMFrame(frame, "festeringScythe") then
+        addon:RefreshFesteringGlows()
+    end
 end
 
 local FESTERING_BUFF_DURATION = 25
@@ -48,16 +37,7 @@ local festeringReasons = { expiry = false, ghoul = false }
 
 local function HideFesteringGlow()
     festeringGlowActive = false
-    local function hideOverlay(overlay)
-        if overlay._glowActive then
-            local gt = addon:GetGlowTypeByID(DKForceDB.spells.festeringScythe.glowType)
-            if gt and gt.stop then pcall(gt.stop, overlay) end
-            overlay._glowActive = false
-        end
-        overlay:Hide()
-    end
-    for _, overlay in pairs(festeringOverlays)    do hideOverlay(overlay) end
-    for _, overlay in pairs(cdmFesteringOverlays) do hideOverlay(overlay) end
+    festeringGroup:Hide()
 end
 
 local function CancelFesteringGrace()
@@ -83,38 +63,13 @@ function addon:StopFesteringGlow()
     HideFesteringGlow()
 end
 
+-- The flag is set before the switch is consulted: a disabled feature still
+-- counts as "the warning is up" so that ticking it back on and refreshing
+-- draws it, rather than needing the reason to occur all over again.
 local function ShowFesteringGlow()
     festeringGlowActive = true
-    local settings = DKForceDB.spells.festeringScythe
-    if not settings.enabled then return 0 end
-    local applied = 0
-
-    local function applyGlow(overlay)
-        local target = overlay._targetFrame
-        -- Never show an overlay for a hidden/recycled UI frame.  In 12.1 the
-        -- Cooldown Manager can keep its item frames alive while another full
-        -- screen UI (such as the world map) is open.
-        if target and target:IsVisible() then
-            overlay:Show()
-            if not overlay._glowActive then
-                -- Original DK Force effects: Pixel Glow, Autocast Shine,
-                -- Button Glow and Proc Border from LibCustomGlow.
-                local glowType = addon:GetGlowTypeByID(settings.glowType)
-                if glowType and glowType.start then
-                    local ok = pcall(glowType.start, overlay, settings)
-                    if ok then overlay._glowActive = true end
-                end
-            end
-            applied = applied + 1
-        end
-    end
-
-    -- Both, always.  Action bars and the Cooldown Manager are two views of the
-    -- same buff rather than alternatives, which is how Stand In Death and Decay
-    -- and the Scourge Strike desaturation already behave.
-    for _, overlay in pairs(festeringOverlays)    do applyGlow(overlay) end
-    for _, overlay in pairs(cdmFesteringOverlays) do applyGlow(overlay) end
-    return applied
+    if not festeringGroup:IsEnabled() then return 0 end
+    return festeringGroup:Show()
 end
 
 -- Festering can have two independent glow reasons.  Do not let one clear the
@@ -138,12 +93,7 @@ end
 -- visible, redraw it immediately with the newly selected direct-overlay style.
 function addon:RefreshFesteringGlowStyle()
     if not festeringGlowActive then return end
-    for _, overlay in pairs(festeringOverlays) do
-        overlay._glowActive = false
-    end
-    for _, overlay in pairs(cdmFesteringOverlays) do
-        overlay._glowActive = false
-    end
+    festeringGroup:ClearGlowFlags()
     ShowFesteringGlow()
 end
 

@@ -17,13 +17,25 @@ end
 -- Lesser Ghoul, so watch the visibility of its tracked Cooldown Manager icon
 -- rather than reading the aura directly.  With no such icon registered the
 -- reminder simply stays silent.
-local dndMissingBarOverlays = {}
-local cdmDnDMissingOverlays = {}
-local dndMissingGlowActive  = false
-
-local function DnDMissingSettings()
-    return DKForceDB and DKForceDB.bloodDndMissing
-end
+--
+-- The overlays and the create/show/hide mechanics are shared with Festering and
+-- Sudden Doom -- see Glow.lua.  What stays here is the part that is actually
+-- about this reminder.
+--
+-- `clearHiddenTargets` is the one place this feature needs more than the other
+-- two.  Its watcher calls Show on every poll for as long as the buff is
+-- missing, not once when the reminder starts, so a target that goes hidden
+-- mid-reminder has to have its glow taken back off; the other two would leave
+-- it lit until the reason itself went away.
+--
+-- ButtonScanner reports Death and Decay because SPELLS.DEATH_AND_DECAY carries
+-- the "deathAndDecay" key.
+local dndMissingGroup = addon:NewGlowGroup({
+    settings           = function() return DKForceDB and DKForceDB.bloodDndMissing end,
+    spellKeys          = { deathAndDecay = true },
+    clearHiddenTargets = true,
+})
+local dndMissingGlowActive = false
 
 -- A method rather than a file-local because CDMHook.lua gates its Cooldown
 -- Manager registration on the same switch, and used to carry its own copy of
@@ -31,93 +43,39 @@ end
 -- added here would leave the registration path disagreeing with the display
 -- path, and the feature would half-work.
 function addon:IsDnDMissingEnabled()
-    local settings = DnDMissingSettings()
-    return settings and settings.enabled or false
-end
-
-local function ClearDnDMissingGlow(overlay)
-    if not overlay or not overlay._glowActive then return end
-    local settings = DnDMissingSettings()
-    local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
-    if glowType and glowType.stop then pcall(glowType.stop, overlay) end
-    overlay._glowActive = false
-end
-
-local function ApplyDnDMissingGlow(overlay)
-    if not overlay or overlay._glowActive or not overlay:IsVisible() then return end
-    local settings = DnDMissingSettings()
-    local glowType = settings and addon:GetGlowTypeByID(settings.glowType)
-    if glowType and glowType.start and pcall(glowType.start, overlay, settings) then
-        overlay._glowActive = true
-    end
+    return dndMissingGroup:IsEnabled()
 end
 
 function addon:StopDnDMissingGlow()
     dndMissingGlowActive = false
-    local function hideOverlay(overlay)
-        ClearDnDMissingGlow(overlay)
-        overlay:Hide()
-    end
-    for _, overlay in pairs(dndMissingBarOverlays) do hideOverlay(overlay) end
-    for _, overlay in pairs(cdmDnDMissingOverlays) do hideOverlay(overlay) end
+    dndMissingGroup:Hide()
 end
 
 function addon:ShowDnDMissingGlow()
     if not addon:IsDnDMissingEnabled() then return end
     dndMissingGlowActive = true
-
-    local function applyOverlay(overlay)
-        local target = overlay._targetFrame
-        -- Never decorate a hidden or recycled frame.
-        if target and target:IsVisible() then
-            overlay:Show()
-            ApplyDnDMissingGlow(overlay)
-        else
-            ClearDnDMissingGlow(overlay)
-            overlay:Hide()
-        end
-    end
-
-    for _, overlay in pairs(dndMissingBarOverlays) do applyOverlay(overlay) end
-    for _, overlay in pairs(cdmDnDMissingOverlays) do applyOverlay(overlay) end
+    dndMissingGroup:Show()
 end
 
--- Action-bar targets.  ButtonScanner reports Death and Decay because
--- SPELLS.DEATH_AND_DECAY carries the "deathAndDecay" key.
+-- Nothing is built while the feature is off, so ticking it on takes a rescan --
+-- which is what the options panel triggers.
 function addon:CreateDnDMissingOverlays()
-    for _, overlay in pairs(dndMissingBarOverlays) do
-        ClearDnDMissingGlow(overlay)
-        overlay:Hide()
-        overlay:SetParent(nil)
-    end
-    wipe(dndMissingBarOverlays)
-
+    dndMissingGroup:ClearBarOverlays()
     if not addon:IsDnDMissingEnabled() then return end
-
-    local buttons = (addon.trackedButtons or {}).deathAndDecay
-    if buttons then
-        for _, button in ipairs(buttons) do
-            dndMissingBarOverlays[button] = addon:CreateOverlay(button, "deathAndDecay")
-        end
-    end
-
+    dndMissingGroup:BuildBarOverlays()
     if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
 end
 
 function addon:RegisterCDMDnDMissingFrame(frame)
-    if not addon:IsDnDMissingEnabled() or cdmDnDMissingOverlays[frame] then return end
-    cdmDnDMissingOverlays[frame] = addon:CreateOverlay(frame, "deathAndDecay")
-    if dndMissingGlowActive then addon:ShowDnDMissingGlow() end
+    if not addon:IsDnDMissingEnabled() then return end
+    if dndMissingGroup:RegisterCDMFrame(frame, "deathAndDecay") and dndMissingGlowActive then
+        addon:ShowDnDMissingGlow()
+    end
 end
 
 -- Called for the buff row, which is the detection source and must stay clean.
 function addon:ClearCDMDnDMissingFrame(frame)
-    local overlay = cdmDnDMissingOverlays[frame]
-    if not overlay then return end
-    ClearDnDMissingGlow(overlay)
-    overlay:Hide()
-    overlay:SetParent(nil)
-    cdmDnDMissingOverlays[frame] = nil
+    dndMissingGroup:UnregisterCDMFrame(frame)
 end
 
 function addon:RefreshDnDMissingGlows()
@@ -127,18 +85,11 @@ function addon:RefreshDnDMissingGlows()
     end
 end
 
+-- Deliberately not gated on the feature switch, unlike the other two Test
+-- buttons: with the feature off there are no overlays to light, so the message
+-- below is what the player needs to see rather than a silent no-op.
 function addon:TestDnDMissingGlow()
-    local shown = 0
-    local function force(overlay)
-        local target = overlay._targetFrame
-        if target and target:IsVisible() then
-            overlay:Show()
-            ApplyDnDMissingGlow(overlay)
-            shown = shown + 1
-        end
-    end
-    for _, overlay in pairs(dndMissingBarOverlays) do force(overlay) end
-    for _, overlay in pairs(cdmDnDMissingOverlays) do force(overlay) end
+    local shown = dndMissingGroup:Show()
     if shown == 0 then
         print("|cffcc0000DK Force:|r Put Death and Decay on an action bar, or add it and its buff to the Cooldown Manager, then use Rescan Bars.")
     end
