@@ -141,6 +141,9 @@ local function reset()
     buttonSpell[macroButton] = PUTREFY_ID
     dtBuffRow:Show()
     macroButton:Show(); cdmIcon:Show()
+    -- A swipe left up by a previous case would carry that case's cooldown into
+    -- this one, which is the very confusion case 33 is about.
+    macroButton.cooldown:Hide(); cdmIcon.cooldown:Hide()
     -- Retire any cooldown a previous case taught the addon, by letting an
     -- out-of-combat read report "ready".  The countdown lives inside the
     -- feature and only a real read can clear it -- which is exactly how it
@@ -213,15 +216,24 @@ check("same tick: CDM Putrefy icon dark", W.glowingChildrenOf(cdmIcon), 0)
 --     The cooldown is learned OUT of combat, because that is the only place it
 --     can be read: in combat every numeric cooldown value is secret.  The
 --     out-of-combat tick below is not scaffolding, it is the mechanism.
+--
+--     The button draws a swipe throughout, because that is what a button whose
+--     spell is on cooldown does.  Modelling the two independently would let
+--     this case assert a state the game cannot produce -- on cooldown with a
+--     clear button -- and that state is now read as "ready", see case 35.
+--     The grey is still the countdown's doing: 0.2s of swipe is well inside
+--     the global-cooldown grace, so the swipe itself claims nothing yet.
 reset()
 buttonSpell[macroButton] = DT_ID
 W.inCombat = false
 dtCooldown, dtStartTime = 5, W.now
+macroButton.cooldown:Show()
 W.advance(0.2)
 W.inCombat = true
 W.advance(0.2)
 check("DT step on real cooldown: no glow", W.glowingChildrenOf(macroButton), 0)
 check("DT step on real cooldown: greyed", #W.dimTexturesOn(macroButton), 1)
+macroButton.cooldown:Hide()
 
 -- 9c. Rune-starved is not "not ready".  IsSpellUsable's insufficientPower still
 --     counts as ready -- runes cycle several times a rotation, so folding that
@@ -446,6 +458,7 @@ buttonSpell[macroButton] = DT_ID
 dtBuffRow:Hide()
 W.inCombat = false
 dtCooldown, dtStartTime = 60, W.now
+macroButton.cooldown:Show()         -- a spell on cooldown draws one
 W.advance(0.3)
 W.inCombat = true
 W.advance(0.2)
@@ -453,9 +466,13 @@ check("learned it is on cooldown: DT step greyed", #W.dimTexturesOn(macroButton)
 check("learned it is on cooldown: no glow", W.glowingChildrenOf(macroButton), 0)
 
 -- 23. ...and the addon counts it down itself, with no further Blizzard read.
+--     The swipe clearing is what the game does when the cooldown ends, and the
+--     countdown expiring is what the addon does; they agree here by
+--     construction.  Case 35 is where they are made to disagree.
 secretCooldown = true
 W.advance(30)
 check("halfway through: still greyed", #W.dimTexturesOn(macroButton), 1)
+macroButton.cooldown:Hide()
 W.advance(31)
 check("cooldown elapsed: glows again", W.glowingChildrenOf(macroButton), 1)
 secretCooldown = false
@@ -467,8 +484,10 @@ buttonSpell[macroButton] = DT_ID
 dtBuffRow:Hide()
 W.inCombat = false
 dtCooldown, dtStartTime = 60, W.now
+macroButton.cooldown:Show()         -- on cooldown, so the button draws one
 W.advance(0.3)                      -- learn the duration
 dtCooldown, dtStartTime = 0, 0
+macroButton.cooldown:Hide()
 W.advance(0.3)                      -- ...and that it is ready again
 W.inCombat = true
 secretCooldown = true
@@ -510,6 +529,7 @@ buttonSpell[macroButton] = DT_ID
 dtBuffRow:Hide()
 W.inCombat = false
 dtCooldown, dtStartTime = 60, W.now
+macroButton.cooldown:Show()         -- on cooldown, so the button draws one
 W.advance(0.2)                      -- learn: on cooldown for 60s
 W.inCombat = true
 dtCooldown, dtStartTime = 0, 0      -- ...and now Blizzard would claim "ready"
@@ -570,5 +590,126 @@ cdmIcon.cooldown:Show()
 W.advance(0.5)
 check("a fresh short swipe is timed from scratch", W.glowingChildrenOf(cdmIcon), 1)
 cdmIcon.cooldown:Hide()
+
+-- ---------------------------------------------------------------
+-- The swipe clock belongs to (frame, spell), not to the frame.
+--
+-- A castsequence button changes which spell it will cast while its swipe stays
+-- up.  Time accumulated before that change was measuring a different spell's
+-- cooldown, and carrying it across reads the new spell as unavailable from its
+-- very first tick.  Reported from play as "the icon stays desaturated even
+-- though the cooldown has elapsed".
+-- ---------------------------------------------------------------
+
+-- 33. The sequence wraps while the swipe stays up.  The last Putrefy step is
+--     cast, the global cooldown's swipe takes over from Putrefy's own without a
+--     gap, and the sequence returns to Dark Transformation.  The elapsed time
+--     carried across that boundary is Putrefy's, and it is already past the
+--     grace, so a clock keyed on the frame alone greys a spell that is ready.
+reset()
+buttonSpell[macroButton] = PUTREFY_ID
+W.inCombat = true
+macroButton.cooldown:Show()
+W.advance(3)
+check("putrefy step, own cooldown past the grace: greyed", #W.dimTexturesOn(macroButton), 1)
+buttonSpell[macroButton] = DT_ID    -- wraps; the swipe never hid
+W.advance(0.2)
+check("wrapped under a live swipe: DT step glows", W.glowingChildrenOf(macroButton), 1)
+check("wrapped under a live swipe: not greyed", #W.dimTexturesOn(macroButton), 0)
+
+-- 33b. ...and the crossing is counted, because it only happens in sustained
+--      combat, where nothing about this cue can be watched live.
+W.printed = {}
+addon:PrintPutrefyDiagnostic()
+local dump = table.concat(W.printed, "\n")
+check("the swipe crossing is recorded", (tonumber(dump:match("staleSwipe=(%d+)")) or 0) >= 1, true)
+
+-- 34. Restarting that clock must not open a hole.  For one grace-length window
+--     after the wrap the swipe claims nothing, and the spell really is on
+--     cooldown.  The tracked countdown is the only thing that knows.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 60, W.now
+macroButton.cooldown:Show()
+W.advance(0.3)                      -- learn: 60s
+W.inCombat = true
+secretCooldown = true
+buttonSpell[macroButton] = PUTREFY_ID
+W.advance(3)
+buttonSpell[macroButton] = DT_ID    -- wraps back, swipe still up
+W.advance(0.2)
+check("wrapped onto a real cooldown: still greyed", #W.dimTexturesOn(macroButton), 1)
+check("wrapped onto a real cooldown: no glow", W.glowingChildrenOf(macroButton), 0)
+secretCooldown = false
+
+-- ---------------------------------------------------------------
+-- A hidden swipe outranks the tracked countdown.
+--
+-- The countdown is an estimate built from a base duration.  Talents and
+-- in-fight reductions both end the real cooldown sooner, and until now the only
+-- thing that corrected an overshoot was leaving combat -- minutes away in a
+-- dungeon, so the button stayed grey for the rest of the pull.
+-- ---------------------------------------------------------------
+
+-- 35. A Dark Transformation step drawing no swipe at all is the game saying the
+--     spell is ready.  That wins, and it wins permanently: the estimate is
+--     discarded, not merely overridden for the tick.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 60, W.now
+macroButton.cooldown:Show()
+W.advance(0.3)
+W.inCombat = true
+secretCooldown = true
+W.advance(0.2)
+check("estimate says on cooldown: greyed", #W.dimTexturesOn(macroButton), 1)
+macroButton.cooldown:Hide()         -- the real cooldown ended early
+W.advance(0.2)
+check("swipe gone: the overshooting estimate is discarded", W.glowingChildrenOf(macroButton), 1)
+check("swipe gone: not greyed", #W.dimTexturesOn(macroButton), 0)
+W.advance(30)
+check("...and the estimate does not come back", W.glowingChildrenOf(macroButton), 1)
+secretCooldown = false
+
+-- 36. The resync must not undo a cast it has just seen.  Blizzard draws the
+--     swipe a moment after the cast succeeds, so there is a tick where the
+--     spell is on cooldown and the button has not caught up.  Reading that gap
+--     as "ready" would clear the countdown at the instant it was set.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 0, 0
+W.advance(0.2)                      -- learn the base duration; ready right now
+W.inCombat = true
+secretCooldown = true
+addon:OnPutrefyCast(DT_ID)          -- ...and the swipe has not drawn yet
+W.advance(0.2)
+check("a cast is not undone by a swipe that has not drawn", #W.dimTexturesOn(macroButton), 1)
+secretCooldown = false
+
+-- 37. The one grey that survives the resync.  Dark Transformation needs a live
+--     ghoul, and IsSpellUsable is what says so.  On screen it is
+--     indistinguishable from the bug above -- cooldown up, icon grey -- so it is
+--     counted with its cause attached rather than left to look like the same
+--     fault.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = true
+dtUsable, dtInsufficientPower = false, false
+W.advance(0.2)
+check("no ghoul: DT step greyed", #W.dimTexturesOn(macroButton), 1)
+W.printed = {}
+addon:PrintPutrefyDiagnostic()
+dump = table.concat(W.printed, "\n")
+check("counted as a grey with no cooldown behind it",
+      (tonumber(dump:match("dimWhileReady=(%d+)")) or 0) >= 1, true)
+check("...and the snapshot names IsSpellUsable as the cause",
+      dump:find("usable=false", 1, true) ~= nil, true)
 
 W.report("Putrefy rotational cue")

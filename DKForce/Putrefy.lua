@@ -88,6 +88,7 @@ end
 -- it -- hardcoding it is why the previous Putrefy feature's timers were deleted.
 local dtCooldownSeconds = nil    -- nil until an out-of-combat read teaches it
 local dtCooldownEndsAt  = nil    -- nil means "not on cooldown as far as we know"
+local dtCastAt          = nil    -- when the countdown was last started, see the resync
 
 local function ReadDarkTransformationCooldown()
     if InCombatLockdown() then return end
@@ -137,6 +138,7 @@ function addon:OnPutrefyCast(spellID)
     -- Unknown duration stays unknown: guessing one is what drifts.
     if not dtCooldownSeconds then return end
     dtCooldownEndsAt = GetTime() + dtCooldownSeconds
+    dtCastAt = GetTime()
 end
 
 local function DarkTransformationOnCooldown()
@@ -160,11 +162,19 @@ end
 -- arrives a GCD late.  That is the right way round: the alternative is the
 -- button flickering grey on every press.
 --
--- Whether the GCD actually draws here has NOT been measured -- the probe that
--- would have told us never ran.  If it turns out it does not, this filter is
--- harmless and the grace can go to zero.
+-- The GCD does draw here -- measured in play, 49 short swipes on a button whose
+-- spell was never cast -- so the filter is earning its keep.
+--
+-- The clock is keyed on (frame, spell), not on the frame.  A castsequence
+-- button changes which spell it will cast while its swipe stays up: the last
+-- Putrefy step is cast, the global cooldown's swipe takes over from Putrefy's
+-- own cooldown without a gap, and the sequence wraps to Dark Transformation.
+-- Time accumulated before that change was measuring Putrefy's cooldown, and it
+-- is already past the grace, so carrying it greyed a spell that was ready for
+-- as long as the swipe stayed up.  That was the reported bug.
 local GCD_GRACE = 1.6
 local swipeSince = {}
+local swipeSpell = {}
 
 local function CooldownSwipeShown(frame)
     local swipe = frame and (frame.cooldown or frame.Cooldown)
@@ -173,9 +183,18 @@ local function CooldownSwipeShown(frame)
     return ok and shown and true or false
 end
 
-local function OnOwnCooldown(frame)
+local function OnOwnCooldown(frame, nextCast)
     if not CooldownSwipeShown(frame) then
         swipeSince[frame] = nil
+        swipeSpell[frame] = nextCast
+        return false
+    end
+    if swipeSpell[frame] ~= nextCast then
+        -- Counted only when a clock was actually running, so this measures the
+        -- crossing that carries stale time rather than every first sighting.
+        if swipeSince[frame] then diag.staleSwipe = (diag.staleSwipe or 0) + 1 end
+        swipeSpell[frame] = nextCast
+        swipeSince[frame] = GetTime()
         return false
     end
     local since = swipeSince[frame]
@@ -197,18 +216,102 @@ local function OnOwnCooldown(frame)
     return held >= GCD_GRACE
 end
 
-local function DarkTransformationReady()
-    -- Usability survives taint where the cooldown does not, so it is still
-    -- worth asking -- but it deliberately excludes cooldown, which is why the
-    -- tracked countdown above exists.  Resources are excluded on purpose:
-    -- runes cycle several times a rotation.
+-- Usability survives taint where the cooldown does not, so it is still worth
+-- asking -- but it deliberately excludes cooldown, which is why the tracked
+-- countdown above exists.  Resources are excluded on purpose: runes cycle
+-- several times a rotation.
+--
+-- Split out from readiness so the diagnostic can name which of the two said no.
+-- On screen they are indistinguishable -- cooldown up, icon grey -- and one of
+-- them is a bug while the other (a dead ghoul: Dark Transformation needs one) is
+-- the correct answer.
+local function DarkTransformationUsable()
     local ok, usable = pcall(function()
         if not (C_Spell and C_Spell.IsSpellUsable) then return true end
         local isUsable, insufficientPower = C_Spell.IsSpellUsable(addon.SPELLS.DARK_TRANSFORMATION.id)
         return (isUsable or insufficientPower) and true or false
     end)
-    if ok and not usable then return false end
+    if not ok then return true end
+    return usable and true or false
+end
+
+local function DarkTransformationReady()
+    if not DarkTransformationUsable() then return false end
     return not DarkTransformationOnCooldown()
+end
+
+-- How long the button is given to draw its swipe after a cast.  Blizzard sets
+-- the cooldown a moment after the cast succeeds, so there is a tick where the
+-- spell is on cooldown and the button has not caught up; reading that gap as
+-- "ready" would discard the countdown at the instant it was started.
+local DT_CAST_SETTLE = 0.5
+
+-- A hidden swipe outranks the tracked countdown.
+--
+-- The countdown is an ESTIMATE built from a base duration, and an estimate is
+-- only good until something better contradicts it.  A button that is showing
+-- Dark Transformation and drawing no cooldown swipe is that something better:
+-- the game itself saying the spell is ready.  It is a boolean, so it survives
+-- taint where every numeric read raises.
+--
+-- Without this the only thing that ever corrected an overshoot was leaving
+-- combat, where the live read is legal -- minutes away in a dungeon, so a
+-- duration longer than the real one greyed the button for the rest of the pull.
+-- Out of combat this is not needed and does not run: ReadDarkTransformationCooldown
+-- already resyncs against the truth there, every tick.
+local function ResyncDarkTransformationFromSwipe()
+    if not dtCooldownEndsAt then return end
+    if not InCombatLockdown() then return end
+    if dtCastAt and (GetTime() - dtCastAt) < DT_CAST_SETTLE then return end
+
+    local ready = false
+    local function look(frame)
+        if ready or not frame then return end
+        if not (frame.IsVisible and frame:IsVisible()) then return end
+        if NextCastFor(frame) ~= "darkTransformation" then return end
+        if CooldownSwipeShown(frame) then return end
+        ready = true
+    end
+    putrefyGlowGroup:ForEach(function(overlay) look(overlay._targetFrame) end)
+    if not ready then
+        putrefyDimGroup:ForEach(function(record) look(record.frame) end)
+    end
+
+    if ready then
+        dtCooldownEndsAt = nil
+        diag.swipeResync = (diag.swipeResync or 0) + 1
+    end
+end
+
+-- The combination this cue was reported broken for: a Dark Transformation step
+-- greyed while its own button draws no cooldown swipe.  The swipe being absent
+-- is the game saying the spell is ready, so nothing about the cooldown can
+-- justify the grey.
+--
+-- After the resync above the countdown can no longer produce it, which leaves
+-- exactly one honest cause -- IsSpellUsable saying no, most often a dead ghoul --
+-- and one dishonest one nobody has thought of yet.  The snapshot separates them,
+-- and it is a snapshot because this only happens in sustained combat, where
+-- there is no reading anything live.  First occurrence only: the hundredth tick
+-- of the same fault says nothing the first did not.
+local function RecordDimWhileReady(frame, nextCast, dim, dtBuffShown, inCombat)
+    if not (dim and nextCast == "darkTransformation") then return end
+    -- Scoped to combat, like the resync it measures.  Out of combat the live
+    -- read corrects the countdown on the very next tick anyway, so a grey there
+    -- is a tick of transience rather than the standing fault this counts.
+    if not inCombat then return end
+    if CooldownSwipeShown(frame) then return end
+    if dtCastAt and (GetTime() - dtCastAt) < DT_CAST_SETTLE then return end
+
+    diag.dimWhileReady = (diag.dimWhileReady or 0) + 1
+    if diag.dimWhileReadyAt then return end
+    -- Every number here is one this addon owns, so formatting it cannot carry a
+    -- secret value out to be raised on later -- which is how an earlier version
+    -- of this diagnostic truncated itself.
+    diag.dimWhileReadyAt = ("usable=%s remaining=%s learned=%s buff=%s combat=%s")
+        :format(tostring(DarkTransformationUsable()),
+                dtCooldownEndsAt and ("%.1f"):format(dtCooldownEndsAt - GetTime()) or "none",
+                tostring(dtCooldownSeconds), tostring(dtBuffShown), tostring(inCombat))
 end
 
 -- A method rather than a file-local so the spec can call it directly, exactly
@@ -301,6 +404,10 @@ local function ApplyPutrefyCues()
     -- nil when no buff row is registered, false when one is registered and
     -- hidden.  The two mean different things.
     local dtBuffShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()
+    -- Before readiness is read, not after: a countdown the buttons contradict
+    -- must be gone by the time this tick's answer is computed, or the grey
+    -- outlives the truth by a tick every time.
+    ResyncDarkTransformationFromSwipe()
     local dtReady     = DarkTransformationReady()
     local inCombat    = InCombatLockdown()
 
@@ -313,15 +420,16 @@ local function ApplyPutrefyCues()
     local function decide(frame)
         local answer = decided[frame]
         if not answer then
+            local nextCast = NextCastFor(frame)
             local glow, dim = addon:EvaluatePutrefyState(
-                settings, NextCastFor(frame), dtBuffShown, dtReady, inCombat,
-                OnOwnCooldown(frame))
+                settings, nextCast, dtBuffShown, dtReady, inCombat,
+                OnOwnCooldown(frame, nextCast))
             answer = { glow = glow, dim = dim }
             decided[frame] = answer
-            local nextCast = NextCastFor(frame)
             diag.seen[tostring(nextCast)] = (diag.seen[tostring(nextCast)] or 0) + 1
             if glow then diag.glow = diag.glow + 1 end
             if dim then diag.dim = diag.dim + 1 end
+            RecordDimWhileReady(frame, nextCast, dim, dtBuffShown, inCombat)
         end
         return answer
     end
@@ -426,6 +534,14 @@ function addon:PrintPutrefyDiagnostic()
     say(("  watcher: entered=%d errors=%d"):format(diag.entered, diag.errors))
     say(("  own cooldown: shortSwipeTicks=%d longSwipeTicks=%d longestHeld=%.1fs")
         :format(diag.swipeShort or 0, diag.swipeLong or 0, diag.swipeMaxHeld or 0))
+    -- The two anomalies, counted because neither can be watched live.
+    -- staleSwipe is the sequence wrapping under a swipe that never hid, which
+    -- used to carry the previous step's elapsed time onto the new spell.
+    -- dimWhileReady is a grey with no cooldown behind it at all; after the
+    -- resync it should only ever be IsSpellUsable, and the snapshot says.
+    say(("  anomalies: staleSwipe=%d dimWhileReady=%d swipeResync=%d")
+        :format(diag.staleSwipe or 0, diag.dimWhileReady or 0, diag.swipeResync or 0))
+    if diag.dimWhileReadyAt then say("  first dimWhileReady: " .. diag.dimWhileReadyAt) end
     say(("  cooldown tracking: learnedDuration=%s endsAt=%s remaining=%s dtCasts=%d lastCastSeen=%s")
         :format(tostring(dtCooldownSeconds), tostring(dtCooldownEndsAt),
                 dtCooldownEndsAt and ("%.1f"):format(dtCooldownEndsAt - GetTime()) or "-",
@@ -460,7 +576,8 @@ function addon:PrintPutrefyDiagnostic()
             local tex = texOf and texOf(entry)
             local nextCast = NextCastFor(frame)
             local glow, dim = addon:EvaluatePutrefyState(
-                settings, nextCast, dtShown, dtReady, InCombatLockdown(), OnOwnCooldown(frame))
+                settings, nextCast, dtShown, dtReady, InCombatLockdown(),
+                OnOwnCooldown(frame, nextCast))
             say(("  %s #%d %-22s cdm=%-5s visible=%-5s next=%-16s -> glow=%-5s dim=%-5s texShown=%s")
                 :format(label, n, (frame.GetName and frame:GetName()) or "<anonymous>",
                         tostring(cdmPutrefyFrames[frame] and true or false),
