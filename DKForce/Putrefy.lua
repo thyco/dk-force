@@ -38,6 +38,12 @@ local putrefyCuesActive = false
 -- that means within 100ms.  See the early return in ApplyPutrefyCues.
 local putrefyTestActive = false
 
+-- A recorder, not a log.  The states that matter -- the buff coming up, the
+-- sequence advancing, a glow being wanted -- happen mid-combat, where nobody can
+-- read a dump.  Counting them as they pass means /dkf putrefy can be run
+-- afterwards and still answer "did this ever happen".  Reset by /reload.
+local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0, seen = {} }
+
 local function PutrefySettings()
     return DKForceDB and DKForceDB.putrefy
 end
@@ -159,6 +165,11 @@ local function ApplyPutrefyCues()
     local dtReady     = DarkTransformationReady()
     local inCombat    = InCombatLockdown()
 
+    diag.ticks = diag.ticks + 1
+    if inCombat then diag.combat = diag.combat + 1 end
+    if dtBuffShown then diag.dtShown = diag.dtShown + 1 end
+    if dtReady then diag.dtReady = diag.dtReady + 1 end
+
     local decided = {}
     local function decide(frame)
         local answer = decided[frame]
@@ -167,6 +178,10 @@ local function ApplyPutrefyCues()
                 settings, NextCastFor(frame), dtBuffShown, dtReady, inCombat)
             answer = { glow = glow, dim = dim }
             decided[frame] = answer
+            local nextCast = NextCastFor(frame)
+            diag.seen[tostring(nextCast)] = (diag.seen[tostring(nextCast)] or 0) + 1
+            if glow then diag.glow = diag.glow + 1 end
+            if dim then diag.dim = diag.dim + 1 end
         end
         return answer
     end
@@ -230,6 +245,14 @@ function addon:PrintPutrefyDiagnostic()
         :format(tostring(settings.enabled), tostring(settings.glow), tostring(settings.dim)))
     say(("state: testActive=%s cuesActive=%s inCombat=%s")
         :format(tostring(putrefyTestActive), tostring(putrefyCuesActive), tostring(InCombatLockdown())))
+    -- What the watcher has actually SEEN since the last reload.  A zero here is
+    -- the answer: whichever input never became true is the broken one.
+    say(("since reload: ticks=%d inCombat=%d dtBuffShown=%d dtReady=%d glowWanted=%d dimWanted=%d")
+        :format(diag.ticks, diag.combat, diag.dtShown, diag.dtReady, diag.glow, diag.dim))
+    local seen = {}
+    for k, v in pairs(diag.seen) do seen[#seen + 1] = ("%s=%d"):format(k, v) end
+    table.sort(seen)
+    say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
 
     -- Seam 1: did the action-bar scan find the macro button?
     local tracked = (addon.trackedButtons or {}).putrefy or {}
