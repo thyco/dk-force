@@ -42,7 +42,8 @@ local putrefyTestActive = false
 -- sequence advancing, a glow being wanted -- happen mid-combat, where nobody can
 -- read a dump.  Counting them as they pass means /dkf putrefy can be run
 -- afterwards and still answer "did this ever happen".  Reset by /reload.
-local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0, seen = {} }
+local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0,
+               entered = 0, lockdown = 0, affecting = 0, errors = 0, seen = {} }
 
 -- Diagnosis only.  Is the frame we cached still the one the Cooldown Manager is
 -- using for this buff?  Its item frames come from a pool: if ours is released
@@ -176,6 +177,17 @@ end
 -- answer is cached for the tick so the two groups cannot disagree about one
 -- frame -- a frame is glowing or greyed, never both.
 local function ApplyPutrefyCues()
+    -- Counted before ANY early return or frame read, so "entered" versus
+    -- "ticks" localises where the watcher stops.  The old counter sat after
+    -- three reads of Cooldown Manager frames -- reads this codebase has twice
+    -- been burned by in combat -- so a mid-combat error there would look
+    -- exactly like the watcher never running.
+    diag.entered = diag.entered + 1
+    if InCombatLockdown() then diag.lockdown = diag.lockdown + 1 end
+    if UnitAffectingCombat and UnitAffectingCombat("player") then
+        diag.affecting = diag.affecting + 1
+    end
+
     -- The safety valve: a frame set by TestPutrefyCue and cleared only here or
     -- by StopPutrefyCues has no other way off, so leaving it were combat ever
     -- began would freeze the cue rather than merely mis-preview it.  Bounding
@@ -260,7 +272,15 @@ putrefyWatcher:SetScript("OnUpdate", function(_, elapsed)
     putrefyElapsed = putrefyElapsed + elapsed
     if putrefyElapsed < 0.10 then return end
     putrefyElapsed = 0
-    ApplyPutrefyCues()
+    -- Recorded, not swallowed: an error here previously aborted the tick with
+    -- no message for anyone running with script errors off, which is the
+    -- default.  A silent watcher and a dead watcher look identical from
+    -- outside; this tells them apart.
+    local ok, err = pcall(ApplyPutrefyCues)
+    if not ok then
+        diag.errors = diag.errors + 1
+        diag.lastError = tostring(err)
+    end
 end)
 
 -- /dkf putrefy -- dump every boundary this cue depends on.
@@ -294,6 +314,9 @@ function addon:PrintPutrefyDiagnostic()
     for k, v in pairs(diag.seen) do seen[#seen + 1] = ("%s=%d"):format(k, v) end
     table.sort(seen)
     say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
+    say(("  watcher: entered=%d lockdown=%d affecting=%d errors=%d")
+        :format(diag.entered, diag.lockdown, diag.affecting, diag.errors))
+    if diag.lastError then say("  lastError: " .. diag.lastError:sub(1, 150)) end
     say(("  buff row: scans=%d dtFramesInPool=%d anyShown=%d oursStillInPool=%d")
         :format(diag.dtScans or 0, diag.dtFrames or 0, diag.dtAnyShown or 0, diag.dtOurs or 0))
 
