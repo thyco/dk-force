@@ -151,3 +151,35 @@ suddenDoomWatcher:SetScript("OnUpdate", function(_, elapsed)
         addon:StopSuddenDoomGlows()
     end
 end)
+
+-- Reported by /dkf cdm.  The Test button cannot distinguish "never registered"
+-- from "registered but the icon is hidden", because a tracked-buff icon is
+-- hidden until the proc fires -- so testing one out of combat always finds
+-- nothing to glow, whatever the registration state.  These counts separate the
+-- two.
+function addon:PrintSuddenDoomState()
+    local bars, cdm, visible = 0, 0, 0
+    for _ in pairs(suddenDoomOverlays) do bars = bars + 1 end
+    for _, overlay in pairs(cdmSuddenDoomOverlays) do
+        cdm = cdm + 1
+        local target = overlay._targetFrame
+        if target and target.IsVisible then
+            local ok, shown = pcall(target.IsVisible, target)
+            if ok and shown then visible = visible + 1 end
+        end
+    end
+    print("|cffcc0000DK Force:|r Sudden Doom:")
+    print(("  Cooldown Manager mode: %s   master switch enabled: %s")
+        :format(tostring(DKForceDB and DKForceDB.trackCDMSuddenDoom), tostring(SuddenDoomEnabled())))
+    print(("  overlays registered: %d on bars, %d in the Cooldown Manager (%d visible now)")
+        :format(bars, cdm, visible))
+    print(("  proc currently detected: %s   glows currently up: %s")
+        :format(tostring(addon:IsSuddenDoomActive()), tostring(suddenDoomActive)))
+    if cdm == 0 and DKForceDB and DKForceDB.trackCDMSuddenDoom then
+        print("  |cffcc0000No Cooldown Manager icon was ever registered|r -- the spell ID the")
+        print("  item reports does not match what CDMHook looks for.  See the list above.")
+    elseif cdm > 0 and visible == 0 then
+        print("  Registered but hidden: a tracked-buff icon only appears while the proc")
+        print("  is up, which is why the Test button finds nothing out of combat.")
+    end
+end

@@ -223,3 +223,56 @@ loader:SetScript("OnEvent", function(_, event, loadedAddon)
     end)
     C_Timer.After(2, RegisterExistingItems)
 end)
+
+-- /dkf cdm -- list what the Cooldown Manager is actually offering.
+--
+-- Registration matches on hardcoded spell IDs, and a mismatch there is
+-- invisible: nothing errors, the frame simply never registers.  Print each
+-- item's reported IDs and which viewer owns it, so the ID a feature needs can
+-- be read off rather than assumed.  Run OUT of combat: GetCDMItemSpellID
+-- deliberately refuses to read in combat, so an in-combat dump shows nil for
+-- every tracked buff.
+function addon:PrintCDMDump()
+    if InCombatLockdown() then
+        print("|cffcc0000DK Force:|r Leave combat first -- item spell IDs cannot be read during it.")
+        return
+    end
+    local viewers = {
+        { name = "Essential",  frame = EssentialCooldownViewer },
+        { name = "Utility",    frame = UtilityCooldownViewer },
+        { name = "BuffIcon",   frame = BuffIconCooldownViewer },
+        { name = "BuffBar",    frame = BuffBarCooldownViewer },
+    }
+    print("|cffcc0000DK Force:|r Cooldown Manager items:")
+    print(("  looking for Sudden Doom as %d (aura) or %d (passive)")
+        :format(SUDDEN_DOOM_BUFF_ID, SUDDEN_DOOM_CDM_ID))
+    local total = 0
+    for _, viewer in ipairs(viewers) do
+        local pool = viewer.frame and viewer.frame.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                total = total + 1
+                local cooldownID = GetCDMSpellID(item)
+                local itemID = GetCDMItemSpellID(item)
+                local name
+                local id = cooldownID or itemID
+                if id and C_Spell and C_Spell.GetSpellName then
+                    local ok, value = pcall(C_Spell.GetSpellName, id)
+                    if ok then name = value end
+                end
+                local shown = "?"
+                if item.IsShown then
+                    local ok, value = pcall(item.IsShown, item)
+                    if ok then shown = tostring(value) end
+                end
+                print(("  %-9s cooldownID=%-9s itemID=%-9s shown=%-5s %s")
+                    :format(viewer.name, tostring(cooldownID), tostring(itemID),
+                            shown, tostring(name)))
+            end
+        end
+    end
+    if total == 0 then
+        print("  none -- the Cooldown Manager has no active items")
+    end
+    if addon.PrintSuddenDoomState then addon:PrintSuddenDoomState() end
+end
