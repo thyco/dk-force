@@ -145,41 +145,68 @@ end
 -- cycle several times a rotation, so folding them in would flicker the button
 -- between glowing and grey continuously.  A cooldown of 1.5s or less is the
 -- global cooldown and does not count.
-local function DarkTransformationReady()
-    local spellID = addon.SPELLS.DARK_TRANSFORMATION.id
-    -- Every read AND every comparison inside ONE pcall.
-    --
-    -- In combat 12.1 hands tainted code SECRET values, and touching one raises.
-    -- A pcall around only the API call protects nothing: the call succeeds and
-    -- the comparison of its result is what throws --
-    -- "Attempt to compare field 'duration' (a secret number value, while
-    -- execution tainted by 'DKForce')".  That is exactly how this shipped: the
-    -- watcher died on its first combat tick and every tick after, and because
-    -- the glow is combat-only the cue simply never appeared, while the
-    -- desaturation kept working out of combat where nothing is secret.
-    --
-    -- IsSpellUsable is inside the same pcall for the same reason, not because
-    -- it is known to be secret: the protection has to cover the use, not the
-    -- call, and guessing which of the two APIs is restricted is how this class
-    -- of bug returns.
-    local ok, ready = pcall(function()
-        local usable, insufficientPower = true, false
-        if C_Spell and C_Spell.IsSpellUsable then
-            usable, insufficientPower = C_Spell.IsSpellUsable(spellID)
+-- Dark Transformation's cooldown, tracked by this addon rather than read from
+-- Blizzard.
+--
+-- Every numeric cooldown read is a SECRET value in combat -- confirmed in game
+-- across five APIs, with comparison, equality and arithmetic all raising
+-- "a secret number value, while execution tainted by 'DKForce'".  There is no
+-- call that answers "is this off cooldown" in combat.
+--
+-- So the duration is learned OUT of combat, where it reads fine; a cast is
+-- timestamped from GetTime; and the remaining time is arithmetic on numbers
+-- this addon owns, which is never secret.  Leaving combat resyncs against the
+-- truth, so a drifted estimate corrects itself within a tick of the fight
+-- ending.  The duration is read rather than hardcoded because talents change
+-- it -- hardcoding it is why the previous Putrefy feature's timers were deleted.
+local dtCooldownSeconds = nil    -- nil until an out-of-combat read teaches it
+local dtCooldownEndsAt  = nil    -- nil means "not on cooldown as far as we know"
+
+local function ReadDarkTransformationCooldown()
+    if InCombatLockdown() then return end
+    local ok, info = pcall(function()
+        local raw = C_Spell.GetSpellCooldown(addon.SPELLS.DARK_TRANSFORMATION.id)
+        if not (raw and raw.duration and raw.startTime) then return nil end
+        -- Compared INSIDE the pcall, like every other read here.
+        if raw.duration > 1.5 then
+            return { duration = raw.duration, endsAt = raw.startTime + raw.duration }
         end
-        if not (usable or insufficientPower) then return false end
-        if C_Spell and C_Spell.GetSpellCooldown then
-            local info = C_Spell.GetSpellCooldown(spellID)
-            if info and info.duration and info.duration > 1.5 then return false end
-        end
-        return true
+        return { duration = nil, endsAt = false }
     end)
-    -- Unreadable means unknown, and unknown counts as ready.  A false grey on
-    -- the button that IS the right press is worse than a false glow, and this
-    -- is the secondary half of the cue: the Putrefy step, which the feature
-    -- exists for, reads a frame's visibility and is unaffected by any of this.
-    if ok then return ready end
-    return true
+    if not (ok and info) then return end
+    if info.duration then dtCooldownSeconds = info.duration end
+    dtCooldownEndsAt = info.endsAt or nil
+end
+
+-- Called from Core's cast dispatcher.  Deliberately does NOT reuse the deleted
+-- warning-window feature's cast-handler name, which is still listed in
+-- removed-symbols.txt and belongs there: this tracks a cooldown, it does not
+-- resurrect that approach.  (Naming it here would trip check 5 too, which is
+-- the point of that gate.)
+function addon:OnPutrefyCast(spellID)
+    if spellID ~= addon.SPELLS.DARK_TRANSFORMATION.id then return end
+    -- Unknown duration stays unknown: guessing one is what drifts.
+    if not dtCooldownSeconds then return end
+    dtCooldownEndsAt = GetTime() + dtCooldownSeconds
+end
+
+local function DarkTransformationOnCooldown()
+    if not dtCooldownEndsAt then return false end
+    return GetTime() < dtCooldownEndsAt
+end
+
+local function DarkTransformationReady()
+    -- Usability survives taint where the cooldown does not, so it is still
+    -- worth asking -- but it deliberately excludes cooldown, which is why the
+    -- tracked countdown above exists.  Resources are excluded on purpose:
+    -- runes cycle several times a rotation.
+    local ok, usable = pcall(function()
+        if not (C_Spell and C_Spell.IsSpellUsable) then return true end
+        local isUsable, insufficientPower = C_Spell.IsSpellUsable(addon.SPELLS.DARK_TRANSFORMATION.id)
+        return (isUsable or insufficientPower) and true or false
+    end)
+    if ok and not usable then return false end
+    return not DarkTransformationOnCooldown()
 end
 
 -- A method rather than a file-local so the spec can call it directly, exactly
@@ -248,6 +275,9 @@ local function ApplyPutrefyCues()
     diag.entered = diag.entered + 1
     -- Diagnosis must never be able to break the thing it measures.
     pcall(RunCooldownProbes)
+    -- Out of combat only, and every tick: this is where the cooldown is
+    -- readable, so it is where the estimate is resynced against the truth.
+    ReadDarkTransformationCooldown()
 
     -- The safety valve: a frame set by TestPutrefyCue and cleared only here or
     -- by StopPutrefyCues has no other way off, so leaving it were combat ever

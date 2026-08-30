@@ -38,13 +38,14 @@ addon.GetButtonSpellID = function(_, button) return buttonSpell[button] end
 
 -- Dark Transformation's own readiness, which is what the DT step is judged on.
 local dtUsable, dtInsufficientPower, dtCooldown = true, false, 0
+local dtStartTime = 0
 -- In combat, 12.1 hands addon code SECRET values. Touching one from tainted
 -- execution raises rather than returning a number, so a table modelling it must
 -- raise on access -- which is exactly what a stub returning a plain number can
 -- never catch, and why this shipped broken.
 local secretCooldown = false
 local function CooldownInfo()
-    if not secretCooldown then return { duration = dtCooldown } end
+    if not secretCooldown then return { duration = dtCooldown, startTime = dtStartTime } end
     return setmetatable({}, { __index = function(_, key)
         error(("Attempt to compare field '%s' (a secret number value, while execution tainted by 'DKForce')")
             :format(tostring(key)))
@@ -130,13 +131,37 @@ addon:RegisterCDMDarkTransformationBuffFrame(dtBuffRow)
 local function reset()
     settings.enabled, settings.glow, settings.dim = true, true, true
     dtUsable, dtInsufficientPower, dtCooldown = true, false, 0
+    dtStartTime = 0
     secretCooldown = false
     buttonSpell[macroButton] = PUTREFY_ID
     dtBuffRow:Show()
     macroButton:Show(); cdmIcon:Show()
+    -- Retire any cooldown a previous case taught the addon, by letting an
+    -- out-of-combat read report "ready".  The countdown lives inside the
+    -- feature and only a real read can clear it -- which is exactly how it
+    -- behaves in game, and why this is the mechanism rather than scaffolding.
+    W.inCombat = false
+    W.advance(0.2)
     W.inCombat = true
     addon:StopPutrefyCues()
 end
+
+-- 8b. Before any out-of-combat read has taught a duration, a cast must NOT
+--     start a countdown.  Guessing one -- say, assuming 60s -- is precisely the
+--     drift that got the previous Putrefy feature's timers deleted, and it
+--     would grey the button for a minute on a character whose talents changed
+--     it.  Placed here deliberately: the learned duration is sticky for the
+--     session, so this is the only point at which "never learned" is true.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = true
+secretCooldown = true
+addon:OnPutrefyCast(DT_ID)
+W.advance(0.2)
+check("cast with no learned duration: does not guess one", W.glowingChildrenOf(macroButton), 1)
+check("cast with no learned duration: not greyed", #W.dimTexturesOn(macroButton), 0)
+secretCooldown = false
 
 -- 9. THE case.  The sequence is on Dark Transformation with DT ready, so the
 --    action-bar button should glow -- while the Cooldown Manager's Putrefy icon
@@ -152,12 +177,18 @@ check("same tick: CDM Putrefy icon greyed", #W.dimTexturesOn(cdmIcon), 1)
 check("same tick: CDM Putrefy icon dark", W.glowingChildrenOf(cdmIcon), 0)
 
 -- 9b. A real cooldown -- not just the GCD -- greys the DT step, driven through
---     the watcher's own DarkTransformationReady rather than a literal dtReady
---     argument, so this exercises the cooldown read the pure-function cases
---     above cannot reach.
+--     the watcher rather than a literal dtReady argument, so this exercises the
+--     cooldown path the pure-function cases above cannot reach.
+--
+--     The cooldown is learned OUT of combat, because that is the only place it
+--     can be read: in combat every numeric cooldown value is secret.  The
+--     out-of-combat tick below is not scaffolding, it is the mechanism.
 reset()
 buttonSpell[macroButton] = DT_ID
-dtCooldown = 5
+W.inCombat = false
+dtCooldown, dtStartTime = 5, W.now
+W.advance(0.2)
+W.inCombat = true
 W.advance(0.2)
 check("DT step on real cooldown: no glow", W.glowingChildrenOf(macroButton), 0)
 check("DT step on real cooldown: greyed", #W.dimTexturesOn(macroButton), 1)
@@ -366,5 +397,108 @@ check("secret cooldown does not kill the watcher", W.glowingChildrenOf(macroButt
 check("secret cooldown does not cost the CDM icon its glow", W.glowingChildrenOf(cdmIcon), 1)
 check("...and it is not greyed instead", #W.dimTexturesOn(cdmIcon), 0)
 secretCooldown = false
+
+-- ---------------------------------------------------------------
+-- Cooldown tracked by the addon itself.
+--
+-- Every numeric cooldown read is a SECRET value in combat -- confirmed in game
+-- across five APIs, comparison, equality and arithmetic alike.  So the duration
+-- is learned OUT of combat, where it reads fine, the cast is timestamped from
+-- the addon's own clock, and the remaining time is arithmetic on numbers the
+-- addon owns.  Leaving combat resyncs against the truth.
+-- ---------------------------------------------------------------
+
+-- 22. Out of combat the real cooldown is readable, and it is what teaches the
+--     addon how long this spell's cooldown actually is -- talents change it, so
+--     it is never hardcoded.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 60, W.now
+W.advance(0.3)
+W.inCombat = true
+W.advance(0.2)
+check("learned it is on cooldown: DT step greyed", #W.dimTexturesOn(macroButton), 1)
+check("learned it is on cooldown: no glow", W.glowingChildrenOf(macroButton), 0)
+
+-- 23. ...and the addon counts it down itself, with no further Blizzard read.
+secretCooldown = true
+W.advance(30)
+check("halfway through: still greyed", #W.dimTexturesOn(macroButton), 1)
+W.advance(31)
+check("cooldown elapsed: glows again", W.glowingChildrenOf(macroButton), 1)
+secretCooldown = false
+
+-- 24. A cast in combat starts the countdown from the addon's own clock, which
+--     is the case Blizzard's secret value makes unreadable.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 60, W.now
+W.advance(0.3)                      -- learn the duration
+dtCooldown, dtStartTime = 0, 0
+W.advance(0.3)                      -- ...and that it is ready again
+W.inCombat = true
+secretCooldown = true
+W.advance(0.2)
+check("ready before the cast: glows", W.glowingChildrenOf(macroButton), 1)
+addon:OnPutrefyCast(DT_ID)
+W.advance(0.2)
+check("cast in combat: greys without any Blizzard read", #W.dimTexturesOn(macroButton), 1)
+W.advance(61)
+check("its own countdown expires: glows again", W.glowingChildrenOf(macroButton), 1)
+secretCooldown = false
+
+-- 25. A cast of something else does not start the countdown.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = true
+addon:OnPutrefyCast(PUTREFY_ID)
+W.advance(0.2)
+check("another spell's cast does not grey the DT step", W.glowingChildrenOf(macroButton), 1)
+
+-- 26. Never having read a duration means unknown, and unknown must not grey the
+--     button that is the correct press.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = true
+secretCooldown = true
+W.advance(0.2)
+check("duration never learned: still glows", W.glowingChildrenOf(macroButton), 1)
+secretCooldown = false
+
+-- 27. The read is out-of-combat ONLY.  Blizzard's numbers are secret in
+--     combat, so a reading taken there is worthless -- and trusting one would
+--     clear a countdown that is still running, which is worse than not reading
+--     at all.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 60, W.now
+W.advance(0.2)                      -- learn: on cooldown for 60s
+W.inCombat = true
+dtCooldown, dtStartTime = 0, 0      -- ...and now Blizzard would claim "ready"
+W.advance(0.2)
+check("in-combat readings are ignored", #W.dimTexturesOn(macroButton), 1)
+check("in-combat readings do not resurrect the glow", W.glowingChildrenOf(macroButton), 0)
+
+-- 28. A global-cooldown-length reading is not a cooldown for this purpose.
+--     Treating it as one would grey the button on every single press, which is
+--     the same flicker the resource exclusion exists to prevent.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 1.0, W.now
+W.advance(0.2)
+W.inCombat = true
+W.advance(0.2)
+check("GCD-length reading does not grey the DT step", W.glowingChildrenOf(macroButton), 1)
+check("GCD-length reading leaves it undimmed", #W.dimTexturesOn(macroButton), 0)
 
 W.report("Putrefy rotational cue")

@@ -205,6 +205,12 @@ local function newTimer(delay, fn)
     return timer
 end
 
+-- Absolute time, for code that timestamps an event and measures from it.
+-- Arithmetic on a number the addon owns is never secret, which is the whole
+-- reason a feature would track a cooldown itself.
+W.now = 10000
+function GetTime() return W.now end
+
 -- Advance the clock. `step` defaults to a tenth of a second because that is the
 -- real poll interval of every watcher here; a spec that wants to prove a
 -- sub-poll tick accumulates rather than evaluates passes a smaller one.
@@ -214,6 +220,7 @@ function W.advance(seconds, step)
     while remaining > 1e-9 do
         local dt = math.min(step, remaining)
         remaining = remaining - dt
+        W.now = W.now + dt
 
         for _, entry in ipairs(onUpdateScripts) do
             entry.fn(entry.frame, dt)
