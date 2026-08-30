@@ -4,6 +4,7 @@ BuffIconCooldownViewer
 CANCEL
 C_AddOns
 C_CooldownViewer
+C_Macro
 C_Spell
 C_Timer
 C_UnitAuras
@@ -26,6 +27,7 @@ GameTooltip_Hide
 GetActionInfo
 GetCursorPosition
 GetMacroBody
+GetMacroInfo
 GetMacroSpell
 GetSpecialization
 GetSpecializationInfo

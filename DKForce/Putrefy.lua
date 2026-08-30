@@ -234,6 +234,9 @@ function addon:PrintPutrefyDiagnostic()
     -- Seam 1: did the action-bar scan find the macro button?
     local tracked = (addon.trackedButtons or {}).putrefy or {}
     say(("scan: trackedButtons.putrefy = %d button(s)"):format(#tracked))
+    for i, button in ipairs(tracked) do
+        say(("  tracked #%d %s"):format(i, (button.GetName and button:GetName()) or "<anonymous>"))
+    end
 
     -- Seam 2: what does every macro slot on the bars actually say?  This is the
     -- one that answers "why was my macro not matched".
@@ -249,19 +252,35 @@ function addon:PrintPutrefyDiagnostic()
         -- itself rather than the code.
         local slot = addon:GetButtonActionSlot(button)
         if slot then
-            local ok, aType, aId = pcall(GetActionInfo, slot)
+            local ok, aType, aId, aSub = pcall(GetActionInfo, slot)
             if ok and aType == "macro" and aId then
                 macros = macros + 1
                 local okBody, text = pcall(GetMacroBody, aId)
+                -- Every id that fails here is a SPELL id (1233448 Dark
+                -- Transformation, 85948 Festering Strike, 43265 Death and
+                -- Decay), while every id that succeeds is a small macro index.
+                -- So `aId` is not always a macro index, and the namespaced API
+                -- may disagree with the global.  Print both, plus subType.
+                local cmBody
+                if C_Macro and C_Macro.GetMacroBody then
+                    local okCM, t2 = pcall(C_Macro.GetMacroBody, aId)
+                    cmBody = okCM and t2 or nil
+                end
+                local macroName
+                if GetMacroInfo then
+                    local okN, n = pcall(GetMacroInfo, aId)
+                    macroName = okN and n or nil
+                end
                 -- Report the WHOLE body on one line, and the containment test
                 -- separately.  Truncating at the first newline hid the very
                 -- text the match depends on -- every macro starts #showtooltip.
                 local body = okBody and text or nil
                 local flat = body and body:gsub("%s+", " "):gsub("^ ", "") or nil
                 local has = body and body:lower():find("putrefy", 1, true) and "yes" or "no"
-                say(("  macro %-12s slot=%-4s id=%-4s matched=%-8s bodyLen=%-5s hasPutrefy=%-4s spell=%s")
-                    :format(tostring(name), tostring(slot), tostring(aId), matched,
-                            body and #body or "NIL", body and has or "-", tostring(spellID)))
+                say(("  %-14s slot=%-4s id=%-9s sub=%-8s matched=%-8s body=%-5s c_macro=%-5s name=%-10s hasPutrefy=%-4s spell=%s")
+                    :format(tostring(name), tostring(slot), tostring(aId), tostring(aSub), matched,
+                            body and #body or "NIL", cmBody and #cmBody or "NIL",
+                            tostring(macroName), body and has or "-", tostring(spellID)))
                 if flat then say(("      body: %s"):format(flat:sub(1, 160))) end
             end
         end
@@ -289,22 +308,26 @@ function addon:PrintPutrefyDiagnostic()
     end
     say(("  dark transformation: usable=%s noPower=%s cooldown=%s"):format(usable, noPower, cd))
 
-    local function report(label, group, frameOf)
+    local function report(label, group, frameOf, texOf)
         local n = 0
         group:ForEach(function(entry)
             n = n + 1
             local frame = frameOf(entry)
+            local tex = texOf and texOf(entry)
             local nextCast = NextCastFor(frame)
             local glow, dim = addon:EvaluatePutrefyState(
                 settings, nextCast, dtShown, dtReady, InCombatLockdown())
-            say(("  %s #%d cdm=%-5s visible=%-5s nextCast=%-18s -> glow=%-5s dim=%s")
-                :format(label, n, tostring(cdmPutrefyFrames[frame] and true or false),
+            say(("  %s #%d %-22s cdm=%-5s visible=%-5s next=%-16s -> glow=%-5s dim=%-5s texShown=%s")
+                :format(label, n, (frame.GetName and frame:GetName()) or "<anonymous>",
+                        tostring(cdmPutrefyFrames[frame] and true or false),
                         tostring(frame and frame.IsVisible and frame:IsVisible()),
-                        tostring(nextCast), tostring(glow), tostring(dim)))
+                        tostring(nextCast), tostring(glow), tostring(dim),
+                        tex and tostring(tex:IsShown()) or "-"))
         end)
         if n == 0 then say(("  %s: NONE"):format(label)) end
     end
     say("decorations:")
     report("glow", putrefyGlowGroup, function(overlay) return overlay._targetFrame end)
-    report("dim ", putrefyDimGroup, function(record) return record.frame end)
+    report("dim ", putrefyDimGroup, function(record) return record.frame end,
+                                    function(record) return record.tex end)
 end
