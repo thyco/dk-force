@@ -39,6 +39,11 @@ addon.GetButtonSpellID = function(_, button) return buttonSpell[button] end
 -- Dark Transformation's own readiness, which is what the DT step is judged on.
 local dtUsable, dtInsufficientPower, dtCooldown = true, false, 0
 local dtStartTime = 0
+-- Milliseconds, as the API reports it.  This is the ONLY way to learn a
+-- duration for a spell that is not currently on cooldown -- and out of combat,
+-- where the live read is legal, it is normally ready and reports 0.
+local dtBaseCooldownMs = 60000
+function GetSpellBaseCooldown() return dtBaseCooldownMs end
 -- In combat, 12.1 hands addon code SECRET values. Touching one from tainted
 -- execution raises rather than returning a number, so a table modelling it must
 -- raise on access -- which is exactly what a stub returning a plain number can
@@ -146,21 +151,46 @@ local function reset()
     addon:StopPutrefyCues()
 end
 
--- 8b. Before any out-of-combat read has taught a duration, a cast must NOT
---     start a countdown.  Guessing one -- say, assuming 60s -- is precisely the
---     drift that got the previous Putrefy feature's timers deleted, and it
---     would grey the button for a minute on a character whose talents changed
---     it.  Placed here deliberately: the learned duration is sticky for the
---     session, so this is the only point at which "never learned" is true.
+-- 8b. When NO duration can be learned -- the base-cooldown API missing or
+--     answering 0 -- a cast must start no countdown at all.  Guessing one, say
+--     assuming 60s, is precisely the drift that got the previous Putrefy
+--     feature's timers deleted: it would grey the button for a minute on a
+--     character whose talents shortened it, and be wrong in the other direction
+--     on one that lengthened it.  Silence beats a guess.
 reset()
 buttonSpell[macroButton] = DT_ID
 dtBuffRow:Hide()
+dtBaseCooldownMs = 0                  -- the API knows nothing
+W.inCombat = false
+W.advance(0.2)
 W.inCombat = true
 secretCooldown = true
 addon:OnPutrefyCast(DT_ID)
 W.advance(0.2)
-check("cast with no learned duration: does not guess one", W.glowingChildrenOf(macroButton), 1)
-check("cast with no learned duration: not greyed", #W.dimTexturesOn(macroButton), 0)
+check("no learnable duration: does not guess one", W.glowingChildrenOf(macroButton), 1)
+check("no learnable duration: not greyed", #W.dimTexturesOn(macroButton), 0)
+secretCooldown = false
+dtBaseCooldownMs = 60000
+
+-- 8c. The duration is learned from the BASE cooldown, not only by catching a
+--     running one.  Out of combat -- the one place a live read is legal -- the
+--     spell is normally ready and reports 0, so an implementation that waits to
+--     observe a running cooldown learns nothing and never greys anything.  That
+--     is exactly how the first attempt shipped broken.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtBuffRow:Hide()
+W.inCombat = false
+dtCooldown, dtStartTime = 0, 0        -- ready: the live read teaches nothing
+W.advance(0.2)
+W.inCombat = true
+secretCooldown = true
+addon:OnPutrefyCast(DT_ID)
+W.advance(0.2)
+check("base cooldown taught the duration: greys after a cast", #W.dimTexturesOn(macroButton), 1)
+check("base cooldown taught the duration: no glow", W.glowingChildrenOf(macroButton), 0)
+W.advance(61)
+check("...and it expires on its own", W.glowingChildrenOf(macroButton), 1)
 secretCooldown = false
 
 -- 9. THE case.  The sequence is on Dark Transformation with DT ready, so the

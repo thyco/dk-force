@@ -164,6 +164,24 @@ local dtCooldownEndsAt  = nil    -- nil means "not on cooldown as far as we know
 
 local function ReadDarkTransformationCooldown()
     if InCombatLockdown() then return end
+
+    -- The BASE cooldown first, because it is available whether or not the spell
+    -- is currently running one.  The live read below only reports a duration
+    -- while a cooldown is ticking -- and out of combat, the one place it is
+    -- legal, the spell is normally ready and reports 0.  Learning only from
+    -- observation therefore learns nothing, which is how the first attempt at
+    -- this shipped: it never greyed anything because it never knew a duration.
+    -- Re-read every time rather than once, so a talent change is picked up.
+    if GetSpellBaseCooldown then
+        local okBase, ms = pcall(GetSpellBaseCooldown, addon.SPELLS.DARK_TRANSFORMATION.id)
+        -- nil means the API had no answer, so keep what we know.  Zero is an
+        -- answer: this spell has no cooldown, which a talent change can make
+        -- true -- so forget the old duration rather than greying forever on it.
+        if okBase and ms then
+            dtCooldownSeconds = ms > 0 and (ms / 1000) or nil
+        end
+    end
+
     local ok, info = pcall(function()
         local raw = C_Spell.GetSpellCooldown(addon.SPELLS.DARK_TRANSFORMATION.id)
         if not (raw and raw.duration and raw.startTime) then return nil end
@@ -174,6 +192,8 @@ local function ReadDarkTransformationCooldown()
         return { duration = nil, endsAt = false }
     end)
     if not (ok and info) then return end
+    -- An observed running cooldown is the more accurate figure -- it reflects
+    -- whatever actually applied to this cast -- so it overrides the base.
     if info.duration then dtCooldownSeconds = info.duration end
     dtCooldownEndsAt = info.endsAt or nil
 end
@@ -184,7 +204,9 @@ end
 -- resurrect that approach.  (Naming it here would trip check 5 too, which is
 -- the point of that gate.)
 function addon:OnPutrefyCast(spellID)
+    diag.lastCast = spellID          -- so a cast-id mismatch is visible, not inferred
     if spellID ~= addon.SPELLS.DARK_TRANSFORMATION.id then return end
+    diag.dtCasts = (diag.dtCasts or 0) + 1
     -- Unknown duration stays unknown: guessing one is what drifts.
     if not dtCooldownSeconds then return end
     dtCooldownEndsAt = GetTime() + dtCooldownSeconds
@@ -397,6 +419,10 @@ function addon:PrintPutrefyDiagnostic()
     table.sort(seen)
     say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
     say(("  watcher: entered=%d errors=%d"):format(diag.entered, diag.errors))
+    say(("  cooldown tracking: learnedDuration=%s endsAt=%s remaining=%s dtCasts=%d lastCastSeen=%s")
+        :format(tostring(dtCooldownSeconds), tostring(dtCooldownEndsAt),
+                dtCooldownEndsAt and ("%.1f"):format(dtCooldownEndsAt - GetTime()) or "-",
+                diag.dtCasts or 0, tostring(diag.lastCast)))
     if diag.lastError then say("  lastError: " .. diag.lastError:sub(1, 150)) end
     say("cooldown API probe (ok / errors):")
     local names = {}
