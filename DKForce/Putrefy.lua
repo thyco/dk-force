@@ -243,24 +243,26 @@ function addon:PrintPutrefyDiagnostic()
         local spellID = addon:GetButtonSpellID(button)
         local keys = addon:GetButtonMacroKeys(button)
         local matched = keys.putrefy and "MATCHED" or "no"
-        -- Re-read the body here rather than trusting the matcher, so a nil body
-        -- is distinguishable from a body that simply did not contain the text.
-        local slot, body
-        if button.GetAttribute then
-            local ok, a = pcall(button.GetAttribute, button, "action")
-            if ok and type(a) == "number" then slot = a end
-        end
-        if not slot and type(button.action) == "number" then slot = button.action end
+        -- Resolve the slot through the scanner's OWN resolver, not a copy.
+        -- Two of its four fallbacks, in the wrong order, made this report nil
+        -- bodies for buttons the scanner reads fine -- the instrument measuring
+        -- itself rather than the code.
+        local slot = addon:GetButtonActionSlot(button)
         if slot then
             local ok, aType, aId = pcall(GetActionInfo, slot)
             if ok and aType == "macro" and aId then
                 macros = macros + 1
                 local okBody, text = pcall(GetMacroBody, aId)
-                body = okBody and text or nil
-                local firstLine = body and body:gsub("^%s+", ""):gsub("\n.*", "") or "<nil>"
-                say(("  macro %-14s slot=%-4s id=%-4s putrefy=%-8s spell=%-9s body=%q")
+                -- Report the WHOLE body on one line, and the containment test
+                -- separately.  Truncating at the first newline hid the very
+                -- text the match depends on -- every macro starts #showtooltip.
+                local body = okBody and text or nil
+                local flat = body and body:gsub("%s+", " "):gsub("^ ", "") or nil
+                local has = body and body:lower():find("putrefy", 1, true) and "yes" or "no"
+                say(("  macro %-12s slot=%-4s id=%-4s matched=%-8s bodyLen=%-5s hasPutrefy=%-4s spell=%s")
                     :format(tostring(name), tostring(slot), tostring(aId), matched,
-                            tostring(spellID), firstLine:sub(1, 48)))
+                            body and #body or "NIL", body and has or "-", tostring(spellID)))
+                if flat then say(("      body: %s"):format(flat:sub(1, 160))) end
             end
         end
     end)

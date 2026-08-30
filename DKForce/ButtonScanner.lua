@@ -98,7 +98,18 @@ end
 -- the spell it will cast, once for the macro body behind it -- so it is its own
 -- function rather than being duplicated.  Third-party bars each stash the slot
 -- somewhere different, which is why there are four attempts.
-local function GetButtonActionSlot(button)
+local GetButtonActionSlot
+
+-- Public so the diagnostic resolves the slot the SAME way the scan does.  Its
+-- first attempt at this kept a partial copy of the four fallbacks, in a
+-- different order, and therefore read a different action than the scanner --
+-- reporting nil macro bodies for buttons the scanner reads fine.  An instrument
+-- that does not walk the same path as the code it measures reports its own bugs.
+function addon:GetButtonActionSlot(button)
+    return GetButtonActionSlot(button)
+end
+
+function GetButtonActionSlot(button)
     if not button then return nil end
 
     if button.GetAction then
