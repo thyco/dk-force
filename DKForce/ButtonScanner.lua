@@ -94,35 +94,38 @@ function addon:ResetSpellLookups()
     overrideLookup = nil
 end
 
-local function GetButtonSpellID(button)
+-- Resolving which action slot a button is showing is needed twice -- once for
+-- the spell it will cast, once for the macro body behind it -- so it is its own
+-- function rather than being duplicated.  Third-party bars each stash the slot
+-- somewhere different, which is why there are four attempts.
+local function GetButtonActionSlot(button)
     if not button then return nil end
-
-    local actionSlot = nil
 
     if button.GetAction then
         local success, action = pcall(button.GetAction, button)
-        if success and action and type(action) == "number" then
-            actionSlot = action
-        end
+        if success and type(action) == "number" then return action end
     end
-
-    if not actionSlot and button._state_action and type(button._state_action) == "number" then
-        actionSlot = button._state_action
+    if button._state_action and type(button._state_action) == "number" then
+        return button._state_action
     end
-
-    if not actionSlot and button.action and type(button.action) == "number" then
-        actionSlot = button.action
+    if button.action and type(button.action) == "number" then
+        return button.action
     end
-
     -- Secure third-party bars (including EllesmereUI) commonly store their
     -- active slot in the standard action attribute instead of button.action.
-    if not actionSlot and button.GetAttribute then
+    if button.GetAttribute then
         local ok, action = pcall(button.GetAttribute, button, "action")
-        if ok and type(action) == "number" then
-            actionSlot = action
-        end
+        if ok and type(action) == "number" then return action end
     end
+    return nil
+end
 
+-- Public because Putrefy calls it per tracked button per tick: for a macro slot
+-- GetMacroSpell returns the spell the /castsequence is CURRENTLY on, which is
+-- precisely "what will this button cast if I press it now".
+function addon:GetButtonSpellID(button)
+    if not button then return nil end
+    local actionSlot = GetButtonActionSlot(button)
     if actionSlot then
         local success, aType, aId = pcall(GetActionInfo, actionSlot)
         if success and aType then
@@ -153,27 +156,54 @@ local function GetButtonSpellID(button)
     return nil
 end
 
+-- Spell-ID matching cannot find a /castsequence button reliably: the reported
+-- spell is whichever step the sequence is on, and the scan runs at login.  So
+-- also match the macro's TEXT against spells that opt in with `macroMatch`.
+-- Only Putrefy opts in; Dark Transformation must not, or one button would be
+-- tracked under two keys and decorated twice.
+function addon:GetButtonMacroKeys(button)
+    local keys = {}
+    local actionSlot = GetButtonActionSlot(button)
+    if not actionSlot then return keys end
+    local ok, aType, aId = pcall(GetActionInfo, actionSlot)
+    if not (ok and aType == "macro" and aId) then return keys end
+    local okBody, body = pcall(GetMacroBody, aId)
+    if not (okBody and body) then return keys end
+    local lowered = body:lower()
+    for _, spell in pairs(addon.SPELLS or {}) do
+        if spell.key and spell.macroMatch and lowered:find(spell.macroMatch, 1, true) then
+            keys[spell.key] = true
+        end
+    end
+    return keys
+end
+
 local function ScanActionBars()
     local results = {}
+
+    local function Track(key, button)
+        results[key] = results[key] or {}
+        for _, existing in ipairs(results[key]) do
+            if existing == button then return end
+        end
+        table.insert(results[key], button)
+    end
+
     local function CheckButton(button)
         if button and button.IsVisible and button:IsVisible() then
             local width, height = button:GetSize()
             if width and height and width > 1 and height > 1 then
-                local spellID = GetButtonSpellID(button)
+                local spellID = addon:GetButtonSpellID(button)
                 if spellID then
                     local baseID = addon:ResolveBaseSpellID(spellID)
                     for _, spell in pairs(addon.SPELLS or {}) do
                         if spell.key and (spellID == spell.id or baseID == spell.id) then
-                            results[spell.key] = results[spell.key] or {}
-                            local found = false
-                            for _, existing in ipairs(results[spell.key]) do
-                                if existing == button then found = true ; break end
-                            end
-                            if not found then
-                                table.insert(results[spell.key], button)
-                            end
+                            Track(spell.key, button)
                         end
                     end
+                end
+                for key in pairs(addon:GetButtonMacroKeys(button)) do
+                    Track(key, button)
                 end
             end
         end
@@ -202,6 +232,7 @@ function addon:ScanAllButtons()
     if addon.CreateSuddenDoomOverlays then addon:CreateSuddenDoomOverlays() end
     if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
     if addon.CreateScourgeOverlays then addon:CreateScourgeOverlays() end
+    if addon.CreatePutrefyOverlays then addon:CreatePutrefyOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
 end

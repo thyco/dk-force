@@ -2,7 +2,6 @@
 runicPower
 AttachCrossToOverlay
 UpdateCrossAppearance
-CreatePutrefyOverlays
 RegisterCDMPutrefyFrame
 ShowPutrefyHoldWarning
 RefreshPutrefyWarnings

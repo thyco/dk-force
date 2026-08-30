@@ -25,6 +25,7 @@ GameTooltip
 GameTooltip_Hide
 GetActionInfo
 GetCursorPosition
+GetMacroBody
 GetMacroSpell
 GetSpecialization
 GetSpecializationInfo

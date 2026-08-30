@@ -60,6 +60,10 @@ function frameMeta:SetScript(which, fn)
     if which == "OnUpdate" then onUpdateScripts[#onUpdateScripts + 1] = { frame = self, fn = fn } end
 end
 function frameMeta:GetScript(which) return self._scripts[which] end
+-- No-op: nothing in these specs drives WoW events, only OnUpdate/C_Timer/direct
+-- calls, so there is nothing for a fake event system to dispatch.
+function frameMeta:RegisterEvent() end
+function frameMeta:UnregisterEvent() end
 
 -- Textures.  The desaturation draws a copy of the button's icon as a texture ON
 -- the button rather than as a child frame, so a spec that cannot see textures
