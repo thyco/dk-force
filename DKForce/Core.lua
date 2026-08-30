@@ -101,17 +101,16 @@ local DEFAULT_GLOW_SETTINGS = {
 
 addon.DEFAULT_DB = {
     seenWelcome       = false,
-    trackCDMFestering = false,
-    trackCDMSuddenDoom = false,
     configSpecView    = "auto",
     spells = {
         festeringScythe = CopyTable(DEFAULT_GLOW_SETTINGS),
         deathCoil       = CopyTable(DEFAULT_GLOW_SETTINGS),
         epidemic        = CopyTable(DEFAULT_GLOW_SETTINGS),
     },
-    -- This is the separate style for the Sudden Doom proc icon when it is
-    -- tracked in the Cooldown Manager.  It must not share colors with either
-    -- Death Coil or Epidemic action-bar glows.
+    -- Only `enabled` is read: this is the master switch for the Sudden Doom
+    -- feature.  Appearance comes from the per-spell Death Coil and Epidemic
+    -- tables above, on action bars and in the Cooldown Manager alike, so one
+    -- spell cannot glow two different colours in two places.
     suddenDoomGlow = CopyTable(DEFAULT_GLOW_SETTINGS),
     -- Glow while you are standing outside your own Death and Decay.
     bloodDndMissing = {
@@ -315,8 +314,6 @@ initFrame:SetScript("OnEvent", function(_, event)
                 end
             end
         end
-        if DKForceDB.trackCDMFestering == nil then DKForceDB.trackCDMFestering = false end
-        if DKForceDB.trackCDMSuddenDoom == nil then DKForceDB.trackCDMSuddenDoom = false end
         if not DKForceDB.suddenDoomGlow then
             DKForceDB.suddenDoomGlow = CopyTable(addon.DEFAULT_DB.suddenDoomGlow)
         else
@@ -452,14 +449,8 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:ScanAllButtons()
         print("|cffcc0000DK Force:|r Rescanned action bars")
     elseif cmd == "cdmscan" then
-        if DKForceDB and DKForceDB.trackCDMFestering then
-            addon:CreateCDMOverlays()
-            print("|cffcc0000DK Force:|r Rescanned Cooldown Manager frames")
-        else
-            print("|cffcc0000DK Force:|r Cooldown Manager tracking is disabled")
-        end
-    elseif cmd == "debug" then
-        addon:ToggleDebug()
+        addon:CreateCDMOverlays()
+        print("|cffcc0000DK Force:|r Rescanned Cooldown Manager frames")
     elseif cmd == "blight" then
         addon:PrintBlightfallDiagnostic()
     elseif cmd == "cdm" then

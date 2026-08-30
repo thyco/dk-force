@@ -4,21 +4,34 @@ local suddenDoomOverlays   = {}
 local cdmSuddenDoomOverlays = {}
 local suddenDoomActive = false
 
+-- Per-spell appearance everywhere.  The Death Coil page colours the Death Coil
+-- icon wherever it appears, the Epidemic page likewise -- there is no separate
+-- Cooldown Manager colour, because both displays are live at once now and one
+-- spell glowing two different colours in two places would be incoherent.
 local function GetSuddenDoomOverlaySettings(overlay)
-    if DKForceDB.trackCDMSuddenDoom then return DKForceDB.suddenDoomGlow end
     return DKForceDB.spells[overlay._spellKey]
 end
 
+-- Both tables, always.  Action bars and the Cooldown Manager are two views of
+-- the same proc, not alternatives, which is how Stand In Death and Decay has
+-- always behaved.
+local function ForEachOverlay(fn)
+    for _, overlay in pairs(suddenDoomOverlays)    do fn(overlay) end
+    for _, overlay in pairs(cdmSuddenDoomOverlays) do fn(overlay) end
+end
+
 -- The "Enable Sudden Doom glow" checkbox on the Sudden Doom page is the master
--- switch for the whole feature.  In Cooldown Manager mode the overlay settings
--- ARE `suddenDoomGlow`, so the switch was already honoured there.  In Action Bar
--- mode -- the default -- the overlays carry the Death Coil / Epidemic tables,
--- whose `enabled` fields default to true and whose checkboxes are hidden, so the
--- switch did nothing.  Consult it in both modes; the per-spell tables keep
--- supplying the appearance (colour, style, speed, opacity) as before.
+-- switch for the whole feature, and the only field of `suddenDoomGlow` anything
+-- reads.  The per-spell Death Coil and Epidemic tables supply the appearance,
+-- on action bars and in the Cooldown Manager alike.
 local function SuddenDoomEnabled()
-    local s = DKForceDB.suddenDoomGlow
+    local s = DKForceDB and DKForceDB.suddenDoomGlow
     return (s and s.enabled) and true or false
+end
+
+-- CDMHook gates its registration on the same switch this file displays from.
+function addon:IsSuddenDoomEnabled()
+    return SuddenDoomEnabled()
 end
 
 function addon:CreateSuddenDoomOverlays()
@@ -33,8 +46,6 @@ function addon:CreateSuddenDoomOverlays()
     end
     wipe(suddenDoomOverlays)
 
-    if DKForceDB.trackCDMSuddenDoom then return end
-
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "deathCoil" or spellKey == "epidemic" then
             for _, button in ipairs(buttons) do
@@ -45,7 +56,7 @@ function addon:CreateSuddenDoomOverlays()
 end
 
 function addon:RegisterCDMSuddenDoomFrame(frame, spellKey)
-    if not DKForceDB.trackCDMSuddenDoom or cdmSuddenDoomOverlays[frame] then return end
+    if not addon:IsSuddenDoomEnabled() or cdmSuddenDoomOverlays[frame] then return end
     local overlay = addon:CreateOverlay(frame, spellKey)
     cdmSuddenDoomOverlays[frame] = overlay
     if suddenDoomActive then addon:ShowSuddenDoomGlows() end
@@ -80,8 +91,7 @@ end
 
 function addon:StopSuddenDoomGlows()
     suddenDoomActive = false
-    local overlays = DKForceDB.trackCDMSuddenDoom and cdmSuddenDoomOverlays or suddenDoomOverlays
-    for _, overlay in pairs(overlays) do
+    ForEachOverlay(function(overlay)
         if overlay._glowActive then
             local s = GetSuddenDoomOverlaySettings(overlay)
             local gt = s and addon:GetGlowTypeByID(s.glowType)
@@ -89,14 +99,13 @@ function addon:StopSuddenDoomGlows()
             overlay._glowActive = false
         end
         overlay:Hide()
-    end
+    end)
 end
 
 function addon:ShowSuddenDoomGlows()
     suddenDoomActive = true
     local masterEnabled = SuddenDoomEnabled()
-    local overlays = DKForceDB.trackCDMSuddenDoom and cdmSuddenDoomOverlays or suddenDoomOverlays
-    for _, overlay in pairs(overlays) do
+    ForEachOverlay(function(overlay)
         local target = overlay._targetFrame
         local s = GetSuddenDoomOverlaySettings(overlay)
         if masterEnabled and target and target:IsVisible() and s and s.enabled then
@@ -109,7 +118,7 @@ function addon:ShowSuddenDoomGlows()
                 end
             end
         end
-    end
+    end)
 end
 
 function addon:RefreshSuddenDoomGlows()
@@ -122,8 +131,7 @@ end
 function addon:TestSuddenDoomGlow(spellKey)
     local shown = 0
     if not SuddenDoomEnabled() then return shown end
-    local overlays = DKForceDB.trackCDMSuddenDoom and cdmSuddenDoomOverlays or suddenDoomOverlays
-    for _, overlay in pairs(overlays) do
+    ForEachOverlay(function(overlay)
         if overlay._spellKey == spellKey and overlay._targetFrame and overlay._targetFrame:IsVisible() then
             local s = GetSuddenDoomOverlaySettings(overlay)
             overlay:Show()
@@ -132,7 +140,7 @@ function addon:TestSuddenDoomGlow(spellKey)
             overlay._glowActive = true
             shown = shown + 1
         end
-    end
+    end)
     return shown
 end
 
@@ -151,35 +159,3 @@ suddenDoomWatcher:SetScript("OnUpdate", function(_, elapsed)
         addon:StopSuddenDoomGlows()
     end
 end)
-
--- Reported by /dkf cdm.  The Test button cannot distinguish "never registered"
--- from "registered but the icon is hidden", because a tracked-buff icon is
--- hidden until the proc fires -- so testing one out of combat always finds
--- nothing to glow, whatever the registration state.  These counts separate the
--- two.
-function addon:PrintSuddenDoomState()
-    local bars, cdm, visible = 0, 0, 0
-    for _ in pairs(suddenDoomOverlays) do bars = bars + 1 end
-    for _, overlay in pairs(cdmSuddenDoomOverlays) do
-        cdm = cdm + 1
-        local target = overlay._targetFrame
-        if target and target.IsVisible then
-            local ok, shown = pcall(target.IsVisible, target)
-            if ok and shown then visible = visible + 1 end
-        end
-    end
-    print("|cffcc0000DK Force:|r Sudden Doom:")
-    print(("  Cooldown Manager mode: %s   master switch enabled: %s")
-        :format(tostring(DKForceDB and DKForceDB.trackCDMSuddenDoom), tostring(SuddenDoomEnabled())))
-    print(("  overlays registered: %d on bars, %d in the Cooldown Manager (%d visible now)")
-        :format(bars, cdm, visible))
-    print(("  proc currently detected: %s   glows currently up: %s")
-        :format(tostring(addon:IsSuddenDoomActive()), tostring(suddenDoomActive)))
-    if cdm == 0 and DKForceDB and DKForceDB.trackCDMSuddenDoom then
-        print("  |cffcc0000No Cooldown Manager icon was ever registered|r -- the spell ID the")
-        print("  item reports does not match what CDMHook looks for.  See the list above.")
-    elseif cdm > 0 and visible == 0 then
-        print("  Registered but hidden: a tracked-buff icon only appears while the proc")
-        print("  is up, which is why the Test button finds nothing out of combat.")
-    end
-end

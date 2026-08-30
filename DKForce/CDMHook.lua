@@ -2,10 +2,20 @@ local addonName, addon = ...
 
 local FESTERING_SCYTHE_SPELL_ID = 458128
 local FESTERING_STRIKE_SPELL_ID = 85948
-local SUDDEN_DOOM_BUFF_ID = 81340
--- CDM exposes the tracked Sudden Doom icon using its parent/passive spell ID,
--- while the live proc aura uses 81340.
-local SUDDEN_DOOM_CDM_ID = 49530
+-- Sudden Doom decorates the SPENDERS -- Death Coil and Epidemic -- exactly as
+-- action-bar mode always has.  It used to hunt a Sudden Doom buff icon (81340 /
+-- 49530) here instead, which is a different target for the same feature and
+-- silently did nothing: the Cooldown Manager offers no such icon to most
+-- setups, so nothing ever registered.  Derived from addon.SPELLS so the Death
+-- Coil / Necrotic Coil and Epidemic / Graveyard variants stay in one place.
+local function SuddenDoomKeyFor(spellID)
+    for _, spell in pairs(addon.SPELLS or {}) do
+        if spell.id == spellID and (spell.key == "deathCoil" or spell.key == "epidemic") then
+            return spell.key
+        end
+    end
+    return nil
+end
 local LESSER_GHOUL_SPELL_ID = 1254252
 -- Base id only; addon:ResolveBaseSpellID maps a live Clawing Shadows or
 -- Vampiric Strike back to it.
@@ -65,19 +75,23 @@ local function IsBuffViewerItem(item)
     return false
 end
 
+local function AnyFeatureWantsCDM()
+    return addon:IsFesteringEnabled() or addon:IsSuddenDoomEnabled()
+        or LesserGhoulEnabled() or addon:IsDnDMissingEnabled()
+        or addon:IsScourgeDimEnabled()
+end
+
 local function RegisterItem(item)
-    if not DKForceDB or (not DKForceDB.trackCDMFestering
-        and not DKForceDB.trackCDMSuddenDoom and not LesserGhoulEnabled()
-        and not addon:IsDnDMissingEnabled() and not addon:IsScourgeDimEnabled()) then return end
+    if not DKForceDB or not AnyFeatureWantsCDM() then return end
     local ok, kind = pcall(function()
         -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
         -- ID out of combat so their icon can still be decorated in combat.
         local spellID = GetCDMSpellID(item) or GetCDMItemSpellID(item)
-        if DKForceDB.trackCDMFestering
+        if addon:IsFesteringEnabled()
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
             return "festering"
-        elseif DKForceDB.trackCDMSuddenDoom and (spellID == SUDDEN_DOOM_BUFF_ID or spellID == SUDDEN_DOOM_CDM_ID) then
-            return "deathCoil"
+        elseif addon:IsSuddenDoomEnabled() and SuddenDoomKeyFor(spellID) then
+            return SuddenDoomKeyFor(spellID)
         elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
         elseif IsScourgeItem(spellID) then
@@ -121,11 +135,11 @@ local function RegisterEllesmereItem(item, euiCDM)
         local spellID = frameData and frameData.spellID
             or euiCDM.GetCanonicalSpellIDForFrame(item)
             or item.spellID or item.overrideSpellID
-        if DKForceDB.trackCDMFestering
+        if addon:IsFesteringEnabled()
             and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
             return "festering"
-        elseif DKForceDB.trackCDMSuddenDoom and (spellID == SUDDEN_DOOM_BUFF_ID or spellID == SUDDEN_DOOM_CDM_ID) then
-            return "deathCoil"
+        elseif addon:IsSuddenDoomEnabled() and SuddenDoomKeyFor(spellID) then
+            return SuddenDoomKeyFor(spellID)
         elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
             return "lesserGhoul"
         elseif IsScourgeItem(spellID) then
@@ -244,8 +258,7 @@ function addon:PrintCDMDump()
         { name = "BuffBar",    frame = BuffBarCooldownViewer },
     }
     print("|cffcc0000DK Force:|r Cooldown Manager items:")
-    print(("  looking for Sudden Doom as %d (aura) or %d (passive)")
-        :format(SUDDEN_DOOM_BUFF_ID, SUDDEN_DOOM_CDM_ID))
+    print("  Sudden Doom decorates the Death Coil and Epidemic icons below.")
     local total = 0
     for _, viewer in ipairs(viewers) do
         local pool = viewer.frame and viewer.frame.itemFramePool
@@ -274,5 +287,4 @@ function addon:PrintCDMDump()
     if total == 0 then
         print("  none -- the Cooldown Manager has no active items")
     end
-    if addon.PrintSuddenDoomState then addon:PrintSuddenDoomState() end
 end

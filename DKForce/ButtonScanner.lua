@@ -223,74 +223,6 @@ function addon:RequestRescan()
 end
 
 -- =========================
--- Debug Logging
--- =========================
-
-local debugMode = false
-
-local function DebugPrint(...)
-    if debugMode then
-        print("|cffcc0000DK Force [DEBUG]:|r", ...)
-    end
-end
-
-function addon:ToggleDebug()
-    debugMode = not debugMode
-    print("|cffcc0000DK Force:|r Debug mode " .. (debugMode and "ON" or "OFF"))
-end
-
--- =========================
--- CDM Retry Loop
--- =========================
-
--- Diff-based CDM scan: only adds new frames, never removes active ones
--- Safe to call multiple times without disrupting existing glows
-function addon:ScanCDMSafe()
-    if not DKForceDB then return 0 end
-    if not addon.CreateCDMOverlaysAdditive then return 0 end
-    if not DKForceDB.trackCDMFestering then
-        return 0
-    end
-
-    local added = addon:CreateCDMOverlaysAdditive()
-    DebugPrint("CDM scan: found " .. added .. " new frame(s)")
-    return added
-end
-
--- Retry loop for CDM scanning on login
-function addon:StartCDMRetryLoop()
-    if not DKForceDB then return end
-    if not DKForceDB.trackCDMFestering then
-        return
-    end
-
-    local retryDelays = {3, 6, 10, 15}
-    local totalFound = 0
-
-    for i, delay in ipairs(retryDelays) do
-        C_Timer.After(delay, function()
-            if totalFound > 0 then
-                DebugPrint("CDM retry #" .. i .. " skipped (already found frames)")
-                return
-            end
-
-            local added = addon:ScanCDMSafe()
-            totalFound = totalFound + added
-
-            if added > 0 then
-                DebugPrint("CDM retry #" .. i .. " at " .. delay .. "s: found " .. added .. " frame(s) — done retrying")
-            else
-                if i == #retryDelays then
-                    DebugPrint("CDM retry loop exhausted — no frames found. User may need /reload")
-                else
-                    DebugPrint("CDM retry #" .. i .. " at " .. delay .. "s: no frames yet, will retry")
-                end
-            end
-        end)
-    end
-end
-
--- =========================
 -- Event Handling
 -- =========================
 
@@ -305,9 +237,13 @@ scanFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_ENTERING_WORLD" then
         wasMounted = IsMounted()
         C_Timer.After(1, function() addon:ScanAllButtons() end)
-
-        -- Start CDM retry loop (tries at 3s, 6s, 10s, 15s — stops once frames are found)
-        addon:StartCDMRetryLoop()
+        -- The Cooldown Manager may not have built its items yet at login.  One
+        -- late rescan covers that; the RefreshData hook handles everything
+        -- after.  This replaced a four-attempt retry loop whose "stop once
+        -- frames are found" branch was unreachable -- the scan it called always
+        -- returned 0 -- so it always ran every attempt and always reported
+        -- failure.
+        C_Timer.After(6, function() addon:CreateCDMOverlays() end)
 
     elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" then
         local isMounted = IsMounted()

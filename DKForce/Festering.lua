@@ -14,10 +14,6 @@ function addon:CreateFesteringOverlays()
     end
     wipe(festeringOverlays)
 
-    -- Use one target at a time.  When the Cooldown Manager option is on,
-    -- Festering is intentionally tracked there instead of on action bars.
-    if DKForceDB.trackCDMFestering then return end
-
     for spellKey, buttons in pairs(addon.trackedButtons or {}) do
         if spellKey == "festeringScythe" then
             for _, button in ipairs(buttons) do
@@ -29,8 +25,14 @@ end
 
 -- Called by CDMHook.lua after Blizzard refreshes a specific Cooldown Manager
 -- item.  This avoids walking arbitrary UI frames (which taints in 12.1).
+-- CDMHook gates its registration on the same switch this file displays from.
+function addon:IsFesteringEnabled()
+    local settings = DKForceDB and DKForceDB.spells and DKForceDB.spells.festeringScythe
+    return (settings and settings.enabled) and true or false
+end
+
 function addon:RegisterCDMFesteringFrame(frame)
-    if not DKForceDB.trackCDMFestering or cdmFesteringOverlays[frame] then return end
+    if not addon:IsFesteringEnabled() or cdmFesteringOverlays[frame] then return end
     local overlay = addon:CreateOverlay(frame, "festeringScythe")
     cdmFesteringOverlays[frame] = overlay
     addon:RefreshFesteringGlows()
@@ -107,11 +109,11 @@ local function ShowFesteringGlow()
         end
     end
 
-    if DKForceDB.trackCDMFestering then
-        for _, overlay in pairs(cdmFesteringOverlays) do applyGlow(overlay) end
-    else
-        for _, overlay in pairs(festeringOverlays) do applyGlow(overlay) end
-    end
+    -- Both, always.  Action bars and the Cooldown Manager are two views of the
+    -- same buff rather than alternatives, which is how Stand In Death and Decay
+    -- and the Scourge Strike desaturation already behave.
+    for _, overlay in pairs(festeringOverlays)    do applyGlow(overlay) end
+    for _, overlay in pairs(cdmFesteringOverlays) do applyGlow(overlay) end
     return applied
 end
 
@@ -275,8 +277,7 @@ end
 function addon:TestFesteringGlow()
     local count = ShowFesteringGlow()
     if count == 0 then
-        local target = DKForceDB.trackCDMFestering and "Cooldown Manager" or "action bars"
-        print("|cffcc0000DK Force:|r No visible Festering Scythe button found on " .. target .. ". Reload UI, then use Rescan Bars.")
+        print("|cffcc0000DK Force:|r No visible Festering Scythe button found on the action bars or in the Cooldown Manager. Reload UI, then use Rescan Bars.")
     else
         print("|cffcc0000DK Force:|r Festering Scythe test glow applied to " .. count .. " button(s).")
     end

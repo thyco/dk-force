@@ -392,23 +392,6 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetPoint("LEFT", rescanButton, "RIGHT", 8, 0)
     testButton:SetText("Test")
 
-    local cdmCheck = CreateCheck(panel, "Use Cooldown Manager (instead of action bars)", 16, -16,
-        function()
-            if selectedKey == "festering" then return DKForceDB.trackCDMFestering end
-            if selectedKey == "suddendoom" or selectedKey == "deathcoil" or selectedKey == "epidemic" then return DKForceDB.trackCDMSuddenDoom end
-            return false
-        end,
-        function(enabled)
-            if selectedKey == "festering" then DKForceDB.trackCDMFestering = enabled
-            elseif selectedKey == "suddendoom" or selectedKey == "deathcoil" or selectedKey == "epidemic" then DKForceDB.trackCDMSuddenDoom = enabled end
-            addon:StopAll()
-            addon:ScanAllButtons()
-            if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
-        end)
-    cdmCheck:ClearAllPoints()
-    cdmCheck:SetPoint("BOTTOMRIGHT", panel, "BOTTOMRIGHT", -310, 43)
-    cdmCheck.Text:SetFontObject("GameFontHighlightSmall")
-
     local function StopPreview(page)
         if not page then return end
         for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
@@ -434,7 +417,14 @@ function addon:CreateConfigPanel(standalone)
         if selectedKey == "festering" then settings = DKForceDB.spells.festeringScythe
         elseif selectedKey == "deathcoil" then settings = DKForceDB.spells.deathCoil
         elseif selectedKey == "epidemic" then settings = DKForceDB.spells.epidemic
-        elseif selectedKey == "suddendoom" then settings = DKForceDB.suddenDoomGlow end
+        elseif selectedKey == "suddendoom" then
+            -- suddenDoomGlow is the master switch only; appearance comes from
+            -- Death Coil, which is what this page's preview icon represents.
+            -- Previewing suddenDoomGlow's own colour would show a glow the game
+            -- never draws.
+            if not (DKForceDB.suddenDoomGlow and DKForceDB.suddenDoomGlow.enabled) then return end
+            settings = DKForceDB.spells.deathCoil
+        end
         if selectedKey == "blooddndmissing" then settings = DKForceDB.bloodDndMissing end
         if selectedKey == "blightfall" then settings = DKForceDB.blightfallChain end
         if not settings or not settings.enabled then return end
@@ -472,7 +462,6 @@ function addon:CreateConfigPanel(standalone)
         if key == "festering" then return DKForceDB.spells.festeringScythe end
         if key == "deathcoil" then return DKForceDB.spells.deathCoil end
         if key == "epidemic" then return DKForceDB.spells.epidemic end
-        if key == "suddendoom" then return DKForceDB.suddenDoomGlow end
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
         if key == "blightfall" then return DKForceDB.blightfallChain end
     end
@@ -594,7 +583,6 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "suddendoom"
         page.glowCard = CreateCard(page, "Sudden Doom Glow")
         page.previewCard = CreateCard(page, "Sudden Doom Preview")
-        page.appearanceCard = CreateCard(page, "Glow Colour")
         AddSelector(page, page.glowCard)
         local function settings() return DKForceDB.suddenDoomGlow end
         local function changed()
@@ -602,12 +590,15 @@ function addon:CreateConfigPanel(standalone)
         end
         page.enable = CreateCheck(page.glowCard, "Enable Sudden Doom glow", 14, -76,
             function() return settings().enabled end, function(v) settings().enabled = v; changed() end)
-        BuildColorCard(page, page.appearanceCard, "suddendoom")
+        page.hint = CreateText(page.glowCard,
+            "Glows Death Coil and Epidemic on your action bars and in the Cooldown Manager. "
+            .. "Set their colours on the Death Coil and Epidemic pages.",
+            14, -108, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
 
         page.previewIcon = CreatePreview(page.previewCard, 81340)
         page.refresh = function()
             page.selector.refresh()
-            page.enable.refresh(); page.refreshColor()
+            page.enable.refresh()
             RefreshPreview(page)
         end
         pages.suddendoom = page
@@ -692,12 +683,13 @@ function addon:CreateConfigPanel(standalone)
                 if card then card:ClearAllPoints() end
             end
             if page.layoutKind == "suddendoom" then
+                -- No colour card here any more, so both columns run full height.
                 page.glowCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.glowCard:SetSize(leftWidth, topHeight)
+                page.glowCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
+                page.glowCard:SetWidth(leftWidth)
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
-                page.previewCard:SetSize(rightWidth, topHeight)
-                page.appearanceCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
-                page.appearanceCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                page.previewCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                page.previewCard:SetWidth(rightWidth)
             elseif page.layoutKind == "festering" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -750,11 +742,8 @@ function addon:CreateConfigPanel(standalone)
         -- action bar would clear, so it must never outlive the panel.  This is
         -- a no-op when no test is running.
         addon:StopBlightfallTest()
-        cdmCheck:SetShown(pageKey == "festering" or pageKey == "suddendoom" or pageKey == "deathcoil" or pageKey == "epidemic")
-        cdmCheck.Text:SetText("Use Cooldown Manager (instead of action bars)")
         rescanButton:Show()
         testButton:Show()
-        cdmCheck.refresh()
         activePage.refresh()
     end
 
