@@ -45,79 +45,6 @@ local putrefyTestActive = false
 local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0,
                entered = 0, errors = 0, seen = {} }
 
--- Which cooldown API survives taint in combat?  Every numeric cooldown read is
--- a SECRET value there -- confirmed in game -- and the usability calls
--- deliberately exclude cooldown, so neither answers "can I press this now".
--- Rather than guess, probe each candidate with the read AND the comparison
--- inside the pcall, and record which came back.  Counted separately in and out
--- of combat: out of combat nothing is secret, so every candidate passes there
--- and a combined count would read as success for all of them.
-local probe = {}
-local function Probe(label, fn)
-    local rec = probe[label]
-    if not rec then rec = { ok = 0, err = 0, okCombat = 0, errCombat = 0 }; probe[label] = rec end
-    local inCombat = InCombatLockdown()
-    local ok, value = pcall(fn)
-    if ok then
-        rec.ok = rec.ok + 1
-        rec.last = tostring(value)
-        if inCombat then
-            rec.okCombat = rec.okCombat + 1
-            rec.lastCombat = tostring(value)
-            -- A distribution, not a final sample.  "shown" for a handful of
-            -- ticks at a time is the global cooldown flickering; "shown" for
-            -- hundreds is a real cooldown being tracked.  Only the shape tells
-            -- those apart, and only the shape decides whether this is usable.
-            rec.values = rec.values or {}
-            local key = tostring(value)
-            rec.values[key] = (rec.values[key] or 0) + 1
-            -- The decisive statistic: how many ticks in a ROW.  A global
-            -- cooldown is ~15 ticks; Dark Transformation's is ~600.  Totals
-            -- cannot tell those apart, run length can -- and it decides whether
-            -- this signal is usable or would grey the button on every press.
-            if key == rec.runKey then
-                rec.run = (rec.run or 0) + 1
-            else
-                rec.runKey, rec.run = key, 1
-            end
-            rec.maxRun = rec.maxRun or {}
-            rec.maxRun[key] = math.max(rec.maxRun[key] or 0, rec.run)
-        end
-    else
-        rec.err = rec.err + 1
-        rec.error = tostring(value):gsub(".*%.lua:%d+: ", "")
-        if inCombat then rec.errCombat = rec.errCombat + 1 end
-    end
-end
-
-local function RunCooldownProbes()
-    local id = addon.SPELLS.DARK_TRANSFORMATION.id
-    -- Numbers are secret; booleans may not be.  Each avenue below is shaped to
-    -- avoid comparing or doing arithmetic on a restricted number.
-    Probe("cd.isEnabled (bool)", function()
-        local info = C_Spell.GetSpellCooldown(id)
-        if not info then return "noinfo" end
-        return info.isEnabled and "enabled" or "disabled"
-    end)
-    Probe("cd.duration == 0 (eq)", function()
-        local info = C_Spell.GetSpellCooldown(id)
-        if not info then return "noinfo" end
-        return info.duration == 0 and "zero" or "nonzero"
-    end)
-    Probe("cd.duration tostring", function()
-        local info = C_Spell.GetSpellCooldown(id)
-        return info and tostring(info.duration) or "noinfo"
-    end)
-    local button = ((addon.trackedButtons or {}).putrefy or {})[1]
-    local slot = button and addon.GetButtonActionSlot and addon:GetButtonActionSlot(button)
-    if slot and button.cooldown and button.cooldown.IsShown then
-        -- Visibility, not a value: the house pattern everywhere else here.
-        Probe("button.cooldown:IsShown", function()
-            return button.cooldown:IsShown() and "shown" or "hidden"
-        end)
-    end
-end
-
 local function PutrefySettings()
     return DKForceDB and DKForceDB.putrefy
 end
@@ -352,8 +279,6 @@ local function ApplyPutrefyCues()
     -- been burned by in combat -- so a mid-combat error there would look
     -- exactly like the watcher never running.
     diag.entered = diag.entered + 1
-    -- Diagnosis must never be able to break the thing it measures.
-    pcall(RunCooldownProbes)
     -- Out of combat only, and every tick: this is where the cooldown is
     -- readable, so it is where the estimate is resynced against the truth.
     ReadDarkTransformationCooldown()
@@ -457,6 +382,20 @@ end)
 -- it, exactly as /dkf cdm warns.
 function addon:PrintPutrefyDiagnostic()
     local function say(...) print("  " .. table.concat({ ... }, " ")) end
+
+    -- Each section is guarded, because a diagnostic that dies halfway is worse
+    -- than useless: it hides the very information it was run to get, and with
+    -- script errors off (the default) it does so silently -- the output just
+    -- stops.  That happened here: a probe carried a SECRET value out through
+    -- tostring, and formatting it a moment later raised outside any pcall,
+    -- truncating the dump with no message.  One bad section now names itself
+    -- and the rest still prints.
+    local function section(label, fn)
+        local ok, err = pcall(fn)
+        if not ok then
+            say(("[%s failed: %s]"):format(label, tostring(err):gsub(".*%.lua:%d+: ", "")))
+        end
+    end
     print("|cffcc0000DK Force:|r Putrefy diagnostic")
 
     local settings = PutrefySettings()
@@ -464,10 +403,18 @@ function addon:PrintPutrefyDiagnostic()
         say("settings: MISSING -- DKForceDB.putrefy does not exist. Reload once.")
         return
     end
+    -- Crosses a section boundary -- computed in "detection", read in
+    -- "decorations" -- so it is declared out here rather than inside either.
+    local dtShown, dtReady
+
+    section("settings", function()
     say(("settings: enabled=%s glow=%s dim=%s")
         :format(tostring(settings.enabled), tostring(settings.glow), tostring(settings.dim)))
     say(("state: testActive=%s cuesActive=%s inCombat=%s")
         :format(tostring(putrefyTestActive), tostring(putrefyCuesActive), tostring(InCombatLockdown())))
+    end)
+
+    section("counters", function()
     -- What the watcher has actually SEEN since the last reload.  A zero here is
     -- the answer: whichever input never became true is the broken one.
     say(("since reload: ticks=%d inCombat=%d dtBuffShown=%d dtReady=%d glowWanted=%d dimWanted=%d")
@@ -484,52 +431,27 @@ function addon:PrintPutrefyDiagnostic()
                 dtCooldownEndsAt and ("%.1f"):format(dtCooldownEndsAt - GetTime()) or "-",
                 diag.dtCasts or 0, tostring(diag.lastCast)))
     if diag.lastError then say("  lastError: " .. diag.lastError:sub(1, 150)) end
-    say("cooldown API probe (ok / errors):")
-    local names = {}
-    for k in pairs(probe) do names[#names + 1] = k end
-    table.sort(names)
-    for _, k in ipairs(names) do
-        local r = probe[k]
-        say(("  %-28s combat: ok=%-5d err=%-5d last=%-8s | out: ok=%-5d last=%s"):format(
-            k, r.okCombat, r.errCombat, tostring(r.lastCombat), r.ok, tostring(r.last)))
-        if r.values then
-            local parts = {}
-            for v, n in pairs(r.values) do parts[#parts + 1] = ("%s:%d"):format(v, n) end
-            table.sort(parts)
-            say("        in combat: " .. table.concat(parts, " "))
-            if r.maxRun then
-                local runs = {}
-                for v, n in pairs(r.maxRun) do runs[#runs + 1] = ("%s:%d"):format(v, n) end
-                table.sort(runs)
-                say("        longest run (ticks): " .. table.concat(runs, " "))
-            end
-        end
-        if r.error then say(("        ERR: %s"):format(r.error:sub(1, 70))) end
-    end
+    end)
 
-    -- Seam 1: did the action-bar scan find the macro button?
+    section("detection", function()
     local tracked = (addon.trackedButtons or {}).putrefy or {}
     say(("scan: trackedButtons.putrefy = %d button(s)"):format(#tracked))
 
-    -- Seam 3: what is actually decorated, and what did each frame decide?
-    local dtShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()
-    local dtReady = DarkTransformationReady()
+    -- nil here means no buff row was ever registered, which is not the same as
+    -- a registered row that is hidden: the first knows nothing, the second says
+    -- the buff is gone.
+    dtShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()
+    dtReady = DarkTransformationReady()
     say(("detection: dtBuffRow=%s dtBuffShown=%s dtReady=%s")
         :format(darkTransformationBuffFrame and "registered" or "NOT REGISTERED",
                 tostring(dtShown), tostring(dtReady)))
 
-    -- The raw usability reads behind dtReady, so a false can be attributed.
-    local usable, noPower, cd = "?", "?", "?"
-    if C_Spell and C_Spell.IsSpellUsable then
-        local ok, u, p = pcall(C_Spell.IsSpellUsable, addon.SPELLS.DARK_TRANSFORMATION.id)
-        if ok then usable, noPower = tostring(u), tostring(p) end
-    end
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local ok, info = pcall(C_Spell.GetSpellCooldown, addon.SPELLS.DARK_TRANSFORMATION.id)
-        if ok and info then cd = tostring(info.duration) end
-    end
-    say(("  dark transformation: usable=%s noPower=%s cooldown=%s"):format(usable, noPower, cd))
+    end)
 
+    section("decorations", function()
+    -- Per frame: what it resolves to, what was decided, and -- separately --
+    -- whether the decoration is actually on screen.  A decision is not a pixel,
+    -- and the gap between the two is where a whole evening went once.
     local function report(label, group, frameOf, texOf)
         local n = 0
         group:ForEach(function(entry)
@@ -538,7 +460,7 @@ function addon:PrintPutrefyDiagnostic()
             local tex = texOf and texOf(entry)
             local nextCast = NextCastFor(frame)
             local glow, dim = addon:EvaluatePutrefyState(
-                settings, nextCast, dtShown, dtReady, InCombatLockdown())
+                settings, nextCast, dtShown, dtReady, InCombatLockdown(), OnOwnCooldown(frame))
             say(("  %s #%d %-22s cdm=%-5s visible=%-5s next=%-16s -> glow=%-5s dim=%-5s texShown=%s")
                 :format(label, n, (frame.GetName and frame:GetName()) or "<anonymous>",
                         tostring(cdmPutrefyFrames[frame] and true or false),
@@ -552,4 +474,5 @@ function addon:PrintPutrefyDiagnostic()
     report("glow", putrefyGlowGroup, function(overlay) return overlay._targetFrame end)
     report("dim ", putrefyDimGroup, function(record) return record.frame end,
                                     function(record) return record.tex end)
+    end)
 end

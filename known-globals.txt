@@ -4,7 +4,6 @@ BuffIconCooldownViewer
 CANCEL
 C_AddOns
 C_CooldownViewer
-C_Macro
 C_Spell
 C_Timer
 C_UnitAuras
@@ -24,13 +23,11 @@ EssentialCooldownViewer
 FindSpellOverrideByID
 GameTooltip
 GameTooltip_Hide
-GetActionCooldown
 GetActionInfo
 GetActionText
 GetCursorPosition
 GetMacroBody
 GetMacroIndexByName
-GetMacroInfo
 GetMacroSpell
 GetSpecialization
 GetSpecializationInfo
@@ -41,7 +38,6 @@ InCombatLockdown
 IsAddOnLoaded
 IsMounted
 IsPlayerSpell
-IsUsableAction
 LibStub
 Minimap
 PlaySound
