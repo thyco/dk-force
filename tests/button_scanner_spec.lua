@@ -17,17 +17,21 @@ addon.SPELLS = {
 }
 
 -- Action slots the fake client knows about.
-local slots = {}          -- slot -> { type = "spell"|"macro", id = n }
+local slots = {}          -- slot -> { type = "spell"|"macro", id = n, sub = s }
 local macroSpell = {}     -- macro index -> the spell the sequence is on now
 local macroBody  = {}     -- macro index -> body text
+local actionText = {}     -- slot -> the macro's NAME, which never changes
+local macroIndex = {}     -- macro name -> its real index
 
 function GetActionInfo(slot)
     local entry = slots[slot]
     if not entry then return nil end
-    return entry.type, entry.id
+    return entry.type, entry.id, entry.sub
 end
 function GetMacroSpell(index) return macroSpell[index] end
 function GetMacroBody(index) return macroBody[index] end
+function GetActionText(slot) return actionText[slot] end
+function GetMacroIndexByName(name) return macroIndex[name] end
 C_Spell = { GetSpellTexture = function() return nil end }
 
 W.load(SOURCE, addon)
@@ -77,5 +81,58 @@ check("unrelated macro is not a Putrefy target", addon:GetButtonMacroKeys(otherB
 --    stops GetMacroBody being read for a slot that is not a macro at all.
 macroBody[55090] = "#showtooltip\n/cast Putrefy"
 check("plain button has no macro keys", next(addon:GetButtonMacroKeys(plainButton)), nil)
+
+-- 7. The real client's shape, and the bug this spec did not model.
+--
+--    For a macro that currently RESOLVES to something -- which a /castsequence
+--    always does -- GetActionInfo's second return is the id of the resolved
+--    spell, NOT the macro index.  Confirmed in game on 2026-08-30:
+--    `GetActionInfo(1)` returned `macro, 1233448, "spell"`, where 1233448 is
+--    Dark Transformation, the sequence's current step.  GetMacroBody has no
+--    macro at that index, so it returns nil and every match silently failed.
+--
+--    Only a macro with an EMPTY subType hands back a real index -- which is
+--    why the original stub, modelling only that case, passed while the feature
+--    could never work.  The body is reachable through the macro's NAME, which
+--    does not change as the sequence advances; that stability is the property
+--    the whole design wanted and did not have.
+local seqButton = W.newButton()
+seqButton.action = 4
+slots[4] = { type = "macro", id = 1233448, sub = "spell" }
+actionText[4] = "Dark T / Putrefy"
+macroIndex["Dark T / Putrefy"] = 129
+macroBody[129] = "#showtooltip\n/cleartarget [help][noharm][dead]\n"
+    .. "/castsequence reset=20/shift/combat dark transformation,putrefy,putrefy"
+check("castsequence macro is matched by name", addon:GetButtonMacroKeys(seqButton).putrefy, true)
+
+-- 8. A macro that resolves to nothing still reports a real index, and that
+--    path must keep working -- it is what every ordinary macro uses.
+check("plain macro still matched by index", addon:GetButtonMacroKeys(macroButton).putrefy, true)
+
+-- 9. A named macro that does not mention Putrefy is still not claimed.
+local otherNamed = W.newButton()
+otherNamed.action = 5
+slots[5] = { type = "macro", id = 47541, sub = "spell" }
+actionText[5] = "Coil"
+macroIndex["Coil"] = 130
+macroBody[130] = "#showtooltip\n/cast Death Coil"
+check("named macro without putrefy is not claimed", addon:GetButtonMacroKeys(otherNamed).putrefy, nil)
+
+-- 10. The same misreading breaks the OTHER half: GetButtonSpellID asks
+--     GetMacroSpell for the id GetActionInfo returned, which is not an index
+--     for a resolving macro, so it answers nil -- and the cue cannot decide
+--     what a button is about to cast.  But `subType == "spell"` means that id
+--     IS the resolved spell, which is precisely the live answer wanted, with
+--     no macro lookup at all.  The in-game dump showed spell=nil for exactly
+--     the two slots holding the castsequence.
+check("castsequence button reports its current step", addon:GetButtonSpellID(seqButton), 1233448)
+
+-- 11. ...and it follows the sequence, which is the whole point.
+slots[4].id = 1247378          -- the sequence advances to Putrefy
+check("castsequence button follows the sequence", addon:GetButtonSpellID(seqButton), 1247378)
+slots[4].id = 1233448
+
+-- 12. A macro that resolves to nothing must still go through GetMacroSpell.
+check("plain macro still resolves via GetMacroSpell", addon:GetButtonSpellID(macroButton), 1233448)
 
 W.report("Action-bar button identification")

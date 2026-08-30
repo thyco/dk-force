@@ -138,11 +138,18 @@ function addon:GetButtonSpellID(button)
     if not button then return nil end
     local actionSlot = GetButtonActionSlot(button)
     if actionSlot then
-        local success, aType, aId = pcall(GetActionInfo, actionSlot)
+        local success, aType, aId, aSub = pcall(GetActionInfo, actionSlot)
         if success and aType then
             if aType == "spell" then
                 return aId
             elseif aType == "macro" and aId then
+                -- A macro that RESOLVES reports what it resolved to, and
+                -- `subType` says which kind.  For "spell" that id is already
+                -- the answer to "what will this cast if pressed now" -- the
+                -- sequence's current step -- and no macro lookup is needed.
+                -- Asking GetMacroSpell for it instead returns nil, because it
+                -- is a spell id and not a macro index.  See GetMacroBodyForSlot.
+                if aSub == "spell" then return aId end
                 local success2, spellID = pcall(GetMacroSpell, aId)
                 if success2 and spellID then return spellID end
                 local tex = nil
@@ -167,6 +174,38 @@ function addon:GetButtonSpellID(button)
     return nil
 end
 
+-- Reading a macro's body is not as simple as GetActionInfo suggests.
+--
+-- Its second return is the macro INDEX only for a macro that currently resolves
+-- to nothing.  For one that resolves -- which a /castsequence always does -- it
+-- is the id of the resolved spell, item or mount, and `subType` says which.
+-- Confirmed in game on 2026-08-30: a slot holding a Dark Transformation ->
+-- Putrefy castsequence answered `macro, 1233448, "spell"`, 1233448 being Dark
+-- Transformation, the step the sequence was on.  GetMacroBody has no macro at
+-- that index, returns nil, and every match fails silently -- which is exactly
+-- how this feature shipped unable to find the one button it exists for.
+--
+-- The macro's NAME is the stable handle: it does not change as the sequence
+-- advances, which is the property the whole design needed and did not have.
+-- Resolve name -> index -> body, and keep the id path as the fallback for the
+-- ordinary macros where it genuinely is an index.
+local function GetMacroBodyForSlot(actionSlot)
+    local okText, name = pcall(GetActionText, actionSlot)
+    if okText and name and name ~= "" then
+        local okIndex, index = pcall(GetMacroIndexByName, name)
+        if okIndex and index and index > 0 then
+            local okBody, body = pcall(GetMacroBody, index)
+            if okBody and body then return body end
+        end
+    end
+    local okInfo, _, aId = pcall(GetActionInfo, actionSlot)
+    if okInfo and aId then
+        local okBody, body = pcall(GetMacroBody, aId)
+        if okBody and body then return body end
+    end
+    return nil
+end
+
 -- Spell-ID matching cannot find a /castsequence button reliably: the reported
 -- spell is whichever step the sequence is on, and the scan runs at login.  So
 -- also match the macro's TEXT against spells that opt in with `macroMatch`.
@@ -176,10 +215,10 @@ function addon:GetButtonMacroKeys(button)
     local keys = {}
     local actionSlot = GetButtonActionSlot(button)
     if not actionSlot then return keys end
-    local ok, aType, aId = pcall(GetActionInfo, actionSlot)
-    if not (ok and aType == "macro" and aId) then return keys end
-    local okBody, body = pcall(GetMacroBody, aId)
-    if not (okBody and body) then return keys end
+    local ok, aType = pcall(GetActionInfo, actionSlot)
+    if not (ok and aType == "macro") then return keys end
+    local body = GetMacroBodyForSlot(actionSlot)
+    if not body then return keys end
     local lowered = body:lower()
     for _, spell in pairs(addon.SPELLS or {}) do
         if spell.key and spell.macroMatch and lowered:find(spell.macroMatch, 1, true) then
