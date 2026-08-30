@@ -58,6 +58,20 @@ addon.SPELLS = {
         name = "Scourge Strike",
         key  = "scourgeStrike",
     },
+    -- Putrefy is castable at any time -- Blizzard does not gate it on Dark
+    -- Transformation; casting it outside the window is simply a DPS loss.  The
+    -- cue is therefore rotational, not a usability read, which is why nothing
+    -- here consults IsSpellUsable for it.
+    --
+    -- `macroMatch` is what lets ButtonScanner find a /castsequence button by its
+    -- text.  Dark Transformation deliberately carries none: it appears in the
+    -- same macro, and giving it one would track that button under two keys.
+    PUTREFY = {
+        id         = 1247378,
+        name       = "Putrefy",
+        key        = "putrefy",
+        macroMatch = "putrefy",
+    },
     BLIGHTFALL = {
         id   = 1271967,
         name = "Blightfall",
@@ -113,6 +127,17 @@ addon.DEFAULT_DB = {
         enabled     = false,
         nativeColor = true,
         color       = {r = 1.00, g = 0.20, b = 0.20},
+    },
+    -- Glow Putrefy while Dark Transformation is up, desaturate it while it is
+    -- not.  Off by default, as every feature added after the first release is.
+    -- `glow` and `dim` are independent under `enabled`, the way the two Lesser
+    -- Ghoul reminders are: either, both or neither.
+    putrefy = {
+        enabled     = false,
+        glow        = true,
+        dim         = true,
+        nativeColor = true,
+        color       = { r = 0.00, g = 0.90, b = 0.20 },
     },
     -- Unholy chain prompt.  The movable icon is the only display DK Force
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
@@ -195,6 +220,7 @@ function addon:StopAll()
     addon:StopSuddenDoomGlows()
     addon:StopDnDMissingGlow()
     addon:StopScourgeDim()
+    addon:StopPutrefyCues()
 end
 
 local castFrame = CreateFrame("Frame")
