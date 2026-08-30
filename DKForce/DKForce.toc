@@ -17,6 +17,7 @@ Libs/LibCustomGlow-1.0/LibCustomGlow-1.0.lua
 
 Core.lua
 Glow.lua
+Dim.lua
 Festering.lua
 ScourgeDim.lua
 SuddenDoom.lua

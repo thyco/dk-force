@@ -16,6 +16,7 @@ local check = W.check
 -- Overridable so a mutant copy can be run against the same assertions; that is
 -- how each check below was proven to fail before this spec was trusted.
 local SOURCE = os.getenv("DKFORCE_SCOURGE_SOURCE") or "DKForce/ScourgeDim.lua"
+local DIM_SOURCE = os.getenv("DKFORCE_DIM_SOURCE") or "DKForce/Dim.lua"
 
 addon = {}
 DKForceDB = {
@@ -25,6 +26,7 @@ DKForceDB = {
 }
 local settings = DKForceDB.spells.festeringScythe
 
+W.load(DIM_SOURCE, addon)
 W.load(SOURCE, addon)
 
 -- One action-bar button and one Cooldown Manager item -- both views of the same
@@ -87,7 +89,40 @@ addon:SetScourgeDimmed(false)
 addon:SetScourgeDimmed(true)
 check("rescan does not stack textures", #bar._textures, 1)
 
--- 8. While disabled, nothing registers -- CDMHook gates on the same switch.
+-- 8. A button that has left the action bars is forgotten on the next rescan.
+--    Records are keyed by the button they decorate, so an unslotted one is
+--    never overwritten by a later scan -- it lingers, still pointing at a
+--    frame that is still on screen, and gets desaturated for a spell it no
+--    longer casts.
+reset()
+local barB = W.newButton()
+addon.trackedButtons = { scourgeStrike = { bar, barB } }
+addon:CreateScourgeOverlays()
+addon:SetScourgeDimmed(true)
+check("both buttons dimmed", #W.dimTexturesOn(bar) + #W.dimTexturesOn(barB), 2)
+addon:StopScourgeDim()
+addon.trackedButtons = { scourgeStrike = { bar } }   -- barB unslotted
+addon:CreateScourgeOverlays()
+addon:SetScourgeDimmed(true)
+check("unslotted button is forgotten", #W.dimTexturesOn(barB), 0)
+check("the remaining button still dims", #W.dimTexturesOn(bar), 1)
+
+-- 9. Registering a new Cooldown Manager frame decorates that frame and leaves
+--    the others alone.  ApplyDim re-reads the icon's art live, so a full-group
+--    pass would quietly refresh every other button's copy from whatever its
+--    icon shows now -- which is why this is asserted on the art rather than on
+--    a count.
+reset()
+addon:SetScourgeDimmed(true)
+check("bar dimmed with its original art", W.dimTexturesOn(bar)[1]:GetTexture(), bar.Icon:GetTexture())
+bar.Icon._texture = "Interface\\Icons\\Spell_Swapped"   -- art changes under the copy
+local newCDM = W.newButton()
+addon:RegisterCDMScourgeFrame(newCDM)
+check("the new frame is decorated", #W.dimTexturesOn(newCDM), 1)
+check("the untouched button keeps its old copy", W.dimTexturesOn(bar)[1]:GetTexture() ~= "Interface\\Icons\\Spell_Swapped", true)
+newCDM:Hide()   -- keep this ad hoc frame from padding counts in later cases
+
+-- 10. While disabled, nothing registers -- CDMHook gates on the same switch.
 reset()
 settings.lesserGhoulDim = false
 local latecomer = W.newButton()
@@ -96,16 +131,16 @@ settings.lesserGhoulDim = true
 addon:SetScourgeDimmed(true)
 check("registration while disabled: no overlay", #W.dimTexturesOn(latecomer), 0)
 
--- 9. Test lights every visible target and reports the count.
+-- 11. Test lights every visible target and reports the count.
 reset()
 check("test dims all targets", addon:TestScourgeDim(), 2)
 
--- 10. Test while disabled shows nothing.
+-- 12. Test while disabled shows nothing.
 reset()
 settings.lesserGhoulDim = false
 check("test while disabled: nothing", addon:TestScourgeDim(), 0)
 
--- 11. Stop clears everything.
+-- 13. Stop clears everything.
 reset()
 addon:SetScourgeDimmed(true)
 addon:StopScourgeDim()
