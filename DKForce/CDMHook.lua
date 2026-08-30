@@ -81,45 +81,66 @@ local function AnyFeatureWantsCDM()
         or addon:IsScourgeDimEnabled()
 end
 
-local function RegisterItem(item)
+-- One classifier and one dispatcher for both discovery paths.
+--
+-- Blizzard's items and EllesmereUI's differ only in how a spell ID is obtained;
+-- the decision from that ID, and what is done with it, are the same. They used
+-- to be written out twice, and a feature added to one copy and forgotten in the
+-- other simply would not work under the UI pack that used the other path --
+-- which has already happened once here.
+--
+-- `itemSpellID` is the item's own reported spell, which Blizzard's path can
+-- only read out of combat; it is what distinguishes a tracked buff row from an
+-- ability row. EllesmereUI resolves both from one cached value, so it passes
+-- the same ID for both.
+local function Classify(spellID, itemSpellID, item)
+    if addon:IsFesteringEnabled()
+        and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
+        return "festering"
+    elseif addon:IsSuddenDoomEnabled() and SuddenDoomKeyFor(spellID) then
+        return SuddenDoomKeyFor(spellID)
+    elseif LesserGhoulEnabled() and itemSpellID == LESSER_GHOUL_SPELL_ID then
+        return "lesserGhoul"
+    elseif IsScourgeItem(spellID) then
+        return "scourge"
+    elseif addon:IsDnDMissingEnabled()
+        and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
+            or itemSpellID == DEATH_AND_DECAY_BUFF_ID) then
+        -- A reported aura ID settles it outright; otherwise fall back to viewer
+        -- ownership, which also holds while the aura is down.
+        return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
+            and "bloodDndBuff" or "bloodDndAbility"
+    end
+end
+
+local DISPATCH = {
+    festering   = function(item) addon:RegisterCDMFesteringFrame(item) end,
+    deathCoil   = function(item) addon:RegisterCDMSuddenDoomFrame(item, "deathCoil") end,
+    epidemic    = function(item) addon:RegisterCDMSuddenDoomFrame(item, "epidemic") end,
+    lesserGhoul = function(item) addon:RegisterCDMLesserGhoulFrame(item) end,
+    scourge     = function(item) addon:RegisterCDMScourgeFrame(item) end,
+    bloodDndAbility = function(item) addon:RegisterCDMDnDMissingFrame(item) end,
+    bloodDndBuff    = function(item) addon:RegisterCDMDnDBuffFrame(item) end,
+}
+
+local function Register(item, resolve)
     if not DKForceDB or not AnyFeatureWantsCDM() then return end
     local ok, kind = pcall(function()
-        -- Tracked Buffs may not expose a cooldown ID; cache their plain spell
-        -- ID out of combat so their icon can still be decorated in combat.
-        local spellID = GetCDMSpellID(item) or GetCDMItemSpellID(item)
-        if addon:IsFesteringEnabled()
-            and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
-            return "festering"
-        elseif addon:IsSuddenDoomEnabled() and SuddenDoomKeyFor(spellID) then
-            return SuddenDoomKeyFor(spellID)
-        elseif LesserGhoulEnabled() and GetCDMItemSpellID(item) == LESSER_GHOUL_SPELL_ID then
-            return "lesserGhoul"
-        elseif IsScourgeItem(spellID) then
-            return "scourge"
-        elseif addon:IsDnDMissingEnabled()
-            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID
-                or GetCDMItemSpellID(item) == DEATH_AND_DECAY_BUFF_ID) then
-            -- A reported aura ID settles it outright; otherwise fall back to
-            -- viewer ownership, which also holds while the aura is down.
-            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
-                and "bloodDndBuff" or "bloodDndAbility"
-        end
+        local spellID, itemSpellID = resolve()
+        return Classify(spellID, itemSpellID, item)
     end)
-    if not ok then return end
+    if not ok or not kind then return end
+    local handler = DISPATCH[kind]
+    if handler then handler(item) end
+end
 
-    if kind == "festering" then
-        addon:RegisterCDMFesteringFrame(item)
-    elseif kind == "deathCoil" or kind == "epidemic" then
-        addon:RegisterCDMSuddenDoomFrame(item, kind)
-    elseif kind == "lesserGhoul" then
-        addon:RegisterCDMLesserGhoulFrame(item)
-    elseif kind == "scourge" then
-        addon:RegisterCDMScourgeFrame(item)
-    elseif kind == "bloodDndAbility" then
-        addon:RegisterCDMDnDMissingFrame(item)
-    elseif kind == "bloodDndBuff" then
-        addon:RegisterCDMDnDBuffFrame(item)
-    end
+local function RegisterItem(item)
+    Register(item, function()
+        -- Tracked Buffs may not expose a cooldown ID; their plain spell ID is
+        -- readable only out of combat, which is why it is a separate value.
+        local itemSpellID = GetCDMItemSpellID(item)
+        return GetCDMSpellID(item) or itemSpellID, itemSpellID
+    end)
 end
 
 -- EllesmereUI's CDM keeps the live Blizzard items in an itemFramePool and
@@ -127,7 +148,7 @@ end
 -- protected icon/texture values and works for its customised CDM layout.
 local function RegisterEllesmereItem(item, euiCDM)
     if not euiCDM or not euiCDM.GetCanonicalSpellIDForFrame then return end
-    local ok, kind = pcall(function()
+    Register(item, function()
         -- Ellesmere stores the resolved spell on its external frame data.
         -- Prefer that clean cached value; an active Blizzard CDM item can
         -- return a secret value from GetSpellID() during combat.
@@ -135,37 +156,8 @@ local function RegisterEllesmereItem(item, euiCDM)
         local spellID = frameData and frameData.spellID
             or euiCDM.GetCanonicalSpellIDForFrame(item)
             or item.spellID or item.overrideSpellID
-        if addon:IsFesteringEnabled()
-            and (spellID == FESTERING_SCYTHE_SPELL_ID or spellID == FESTERING_STRIKE_SPELL_ID) then
-            return "festering"
-        elseif addon:IsSuddenDoomEnabled() and SuddenDoomKeyFor(spellID) then
-            return SuddenDoomKeyFor(spellID)
-        elseif LesserGhoulEnabled() and spellID == LESSER_GHOUL_SPELL_ID then
-            return "lesserGhoul"
-        elseif IsScourgeItem(spellID) then
-            return "scourge"
-        elseif addon:IsDnDMissingEnabled()
-            and (spellID == DEATH_AND_DECAY_SPELL_ID or spellID == DEATH_AND_DECAY_BUFF_ID) then
-            -- A reported aura ID settles it outright; otherwise fall back to
-            -- viewer ownership, which also holds while the aura is down.
-            return (spellID == DEATH_AND_DECAY_BUFF_ID or IsBuffViewerItem(item))
-                and "bloodDndBuff" or "bloodDndAbility"
-        end
+        return spellID, spellID
     end)
-    if not ok then return end
-    if kind == "festering" then
-        addon:RegisterCDMFesteringFrame(item)
-    elseif kind == "deathCoil" or kind == "epidemic" then
-        addon:RegisterCDMSuddenDoomFrame(item, kind)
-    elseif kind == "lesserGhoul" then
-        addon:RegisterCDMLesserGhoulFrame(item)
-    elseif kind == "scourge" then
-        addon:RegisterCDMScourgeFrame(item)
-    elseif kind == "bloodDndAbility" then
-        addon:RegisterCDMDnDMissingFrame(item)
-    elseif kind == "bloodDndBuff" then
-        addon:RegisterCDMDnDBuffFrame(item)
-    end
 end
 
 local function InstallHook()

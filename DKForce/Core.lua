@@ -142,6 +142,27 @@ addon.DEFAULT_DB = {
     },
 }
 
+-- Fill in whatever a saved table is missing, recursively.
+--
+-- This replaced six hand-written copies of the same pattern, one per settings
+-- table, which is why a new default only reached existing characters if someone
+-- remembered to add another block -- and why the Blightfall delays had to be
+-- RENAMED rather than merged when their meaning changed.
+--
+-- Nested defaults are rebuilt key by key rather than copied wholesale, so a
+-- saved table never ends up sharing a reference with DEFAULT_DB, and a colour
+-- saved before a channel existed gains that channel instead of being left short.
+local function MergeDefaults(target, defaults)
+    for key, value in pairs(defaults) do
+        if type(value) == "table" then
+            if type(target[key]) ~= "table" then target[key] = {} end
+            MergeDefaults(target[key], value)
+        elseif target[key] == nil then
+            target[key] = value
+        end
+    end
+end
+
 function addon:GetActiveSpecID()
     if not (GetSpecialization and GetSpecializationInfo) then return nil end
     local index = GetSpecialization()
@@ -285,48 +306,8 @@ initFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
 
 initFrame:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
-        if not DKForceDB then
-            DKForceDB = CopyTable(addon.DEFAULT_DB)
-        end
-
-        if not DKForceDB.spells then DKForceDB.spells = {} end
-        if not DKForceDB.spells.festeringScythe then
-            DKForceDB.spells.festeringScythe = CopyTable(addon.DEFAULT_DB.spells.festeringScythe)
-        else
-            for k, v in pairs(addon.DEFAULT_DB.spells.festeringScythe) do
-                if DKForceDB.spells.festeringScythe[k] == nil then
-                    DKForceDB.spells.festeringScythe[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
-        if not DKForceDB.suddenDoomGlow then
-            DKForceDB.suddenDoomGlow = CopyTable(addon.DEFAULT_DB.suddenDoomGlow)
-        else
-            for k, v in pairs(addon.DEFAULT_DB.suddenDoomGlow) do
-                if DKForceDB.suddenDoomGlow[k] == nil then
-                    DKForceDB.suddenDoomGlow[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
-        if not DKForceDB.bloodDndMissing then
-            DKForceDB.bloodDndMissing = CopyTable(addon.DEFAULT_DB.bloodDndMissing)
-        else
-            for k, v in pairs(addon.DEFAULT_DB.bloodDndMissing) do
-                if DKForceDB.bloodDndMissing[k] == nil then
-                    DKForceDB.bloodDndMissing[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
-        if not DKForceDB.blightfallChain then
-            DKForceDB.blightfallChain = CopyTable(addon.DEFAULT_DB.blightfallChain)
-        else
-            for k, v in pairs(addon.DEFAULT_DB.blightfallChain) do
-                if DKForceDB.blightfallChain[k] == nil then
-                    DKForceDB.blightfallChain[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
-        if DKForceDB.configSpecView == nil then DKForceDB.configSpecView = "auto" end
+        DKForceDB = DKForceDB or {}
+        MergeDefaults(DKForceDB, addon.DEFAULT_DB)
 
         C_Timer.After(1, function() addon:ScanAllButtons() end)
 
