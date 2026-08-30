@@ -64,6 +64,13 @@ local function Probe(label, fn)
         if inCombat then
             rec.okCombat = rec.okCombat + 1
             rec.lastCombat = tostring(value)
+            -- A distribution, not a final sample.  "shown" for a handful of
+            -- ticks at a time is the global cooldown flickering; "shown" for
+            -- hundreds is a real cooldown being tracked.  Only the shape tells
+            -- those apart, and only the shape decides whether this is usable.
+            rec.values = rec.values or {}
+            local key = tostring(value)
+            rec.values[key] = (rec.values[key] or 0) + 1
         end
     else
         rec.err = rec.err + 1
@@ -358,7 +365,13 @@ function addon:PrintPutrefyDiagnostic()
         local r = probe[k]
         say(("  %-28s combat: ok=%-5d err=%-5d last=%-8s | out: ok=%-5d last=%s"):format(
             k, r.okCombat, r.errCombat, tostring(r.lastCombat), r.ok, tostring(r.last)))
-        if r.error then say(("        ERR: %s"):format(r.error:sub(1, 90))) end
+        if r.values then
+            local parts = {}
+            for v, n in pairs(r.values) do parts[#parts + 1] = ("%s:%d"):format(v, n) end
+            table.sort(parts)
+            say("        in combat: " .. table.concat(parts, " "))
+        end
+        if r.error then say(("        ERR: %s"):format(r.error:sub(1, 70))) end
     end
 
     -- Seam 1: did the action-bar scan find the macro button?
