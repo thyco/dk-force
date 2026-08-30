@@ -43,50 +43,16 @@ local putrefyTestActive = false
 -- read a dump.  Counting them as they pass means /dkf putrefy can be run
 -- afterwards and still answer "did this ever happen".  Reset by /reload.
 local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0,
-               entered = 0, lockdown = 0, affecting = 0, errors = 0, seen = {} }
+               entered = 0, errors = 0, seen = {} }
 
--- Diagnosis only.  Is the frame we cached still the one the Cooldown Manager is
--- using for this buff?  Its item frames come from a pool: if ours is released
--- and the buff is then shown on a different frame, our reference stays hidden
--- forever and the cue can never fire.  Comparing "any active DT buff frame is
--- shown" against "OUR frame is shown" separates a stale reference from a buff
--- row that genuinely never shows.
-local function DiagScanBuffViewers()
-    local frames, anyShown, oursInPool = 0, 0, false
-    for _, viewer in ipairs({ BuffIconCooldownViewer, BuffBarCooldownViewer }) do
-        local pool = viewer and viewer.itemFramePool
-        if pool and pool.EnumerateActive then
-            for item in pool:EnumerateActive() do
-                local id
-                if item.GetCooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
-                    local ok, cid = pcall(item.GetCooldownID, item)
-                    if ok and cid then
-                        local ok2, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cid)
-                        id = ok2 and info and info.spellID
-                    end
-                end
-                if id == addon.SPELLS.DARK_TRANSFORMATION.id then
-                    frames = frames + 1
-                    local okShown, shown = pcall(item.IsShown, item)
-                    if okShown and shown then anyShown = anyShown + 1 end
-                    if item == darkTransformationBuffFrame then oursInPool = true end
-                end
-            end
-        end
-    end
-    return frames, anyShown, oursInPool
-end
-
--- Which cooldown API survives taint in combat?  GetSpellCooldown's duration is
--- a SECRET value there -- confirmed in game -- and IsSpellUsable deliberately
--- excludes cooldown, so neither answers "can I press this now" on its own.
--- Rather than guess a third time, probe every candidate each tick with the read
--- AND the comparison inside the pcall, and record which ones came back.  The
--- game is the only authority on this.
+-- Which cooldown API survives taint in combat?  Every numeric cooldown read is
+-- a SECRET value there -- confirmed in game -- and the usability calls
+-- deliberately exclude cooldown, so neither answers "can I press this now".
+-- Rather than guess, probe each candidate with the read AND the comparison
+-- inside the pcall, and record which came back.  Counted separately in and out
+-- of combat: out of combat nothing is secret, so every candidate passes there
+-- and a combined count would read as success for all of them.
 local probe = {}
--- Counted separately in and out of combat, because only the in-combat numbers
--- decide anything: out of combat nothing is secret, so every candidate passes
--- there and a combined count would read as success for all six.
 local function Probe(label, fn)
     local rec = probe[label]
     if not rec then rec = { ok = 0, err = 0, okCombat = 0, errCombat = 0 }; probe[label] = rec end
@@ -108,49 +74,29 @@ end
 
 local function RunCooldownProbes()
     local id = addon.SPELLS.DARK_TRANSFORMATION.id
-    Probe("C_Spell.GetSpellCooldown", function()
+    -- Numbers are secret; booleans may not be.  Each avenue below is shaped to
+    -- avoid comparing or doing arithmetic on a restricted number.
+    Probe("cd.isEnabled (bool)", function()
         local info = C_Spell.GetSpellCooldown(id)
-        return info and info.duration and info.duration > 1.5 or false
+        if not info then return "noinfo" end
+        return info.isEnabled and "enabled" or "disabled"
     end)
-    Probe("C_Spell.IsSpellUsable", function()
-        local u, p = C_Spell.IsSpellUsable(id)
-        return (u and "usable" or "no") .. "/" .. (p and "nopower" or "-")
+    Probe("cd.duration == 0 (eq)", function()
+        local info = C_Spell.GetSpellCooldown(id)
+        if not info then return "noinfo" end
+        return info.duration == 0 and "zero" or "nonzero"
     end)
-    if GetSpellCooldown then
-        Probe("GetSpellCooldown(legacy)", function()
-            local start, dur = GetSpellCooldown(id)
-            return dur and dur > 1.5 or false
-        end)
-    end
-    if C_Spell.GetSpellCharges then
-        Probe("C_Spell.GetSpellCharges", function()
-            local c = C_Spell.GetSpellCharges(id)
-            return c and tostring(c.currentCharges) or "nil"
-        end)
-    end
-    -- Action-slot reads: the UI draws this sweep, so it may be readable where
-    -- the spell-level call is not.
+    Probe("cd.duration tostring", function()
+        local info = C_Spell.GetSpellCooldown(id)
+        return info and tostring(info.duration) or "noinfo"
+    end)
     local button = ((addon.trackedButtons or {}).putrefy or {})[1]
     local slot = button and addon.GetButtonActionSlot and addon:GetButtonActionSlot(button)
-    if slot then
-        if GetActionCooldown then
-            Probe("GetActionCooldown(slot)", function()
-                local start, dur = GetActionCooldown(slot)
-                return dur and dur > 1.5 or false
-            end)
-        end
-        if IsUsableAction then
-            Probe("IsUsableAction(slot)", function()
-                local u, m = IsUsableAction(slot)
-                return (u and "usable" or "no") .. "/" .. (m and "nomana" or "-")
-            end)
-        end
-        if button.cooldown and button.cooldown.GetCooldownTimes then
-            Probe("button.cooldown times", function()
-                local start, dur = button.cooldown:GetCooldownTimes()
-                return dur and (dur / 1000) > 1.5 or false
-            end)
-        end
+    if slot and button.cooldown and button.cooldown.IsShown then
+        -- Visibility, not a value: the house pattern everywhere else here.
+        Probe("button.cooldown:IsShown", function()
+            return button.cooldown:IsShown() and "shown" or "hidden"
+        end)
     end
 end
 
@@ -284,10 +230,6 @@ local function ApplyPutrefyCues()
     diag.entered = diag.entered + 1
     -- Diagnosis must never be able to break the thing it measures.
     pcall(RunCooldownProbes)
-    if InCombatLockdown() then diag.lockdown = diag.lockdown + 1 end
-    if UnitAffectingCombat and UnitAffectingCombat("player") then
-        diag.affecting = diag.affecting + 1
-    end
 
     -- The safety valve: a frame set by TestPutrefyCue and cleared only here or
     -- by StopPutrefyCues has no other way off, so leaving it were combat ever
@@ -314,15 +256,6 @@ local function ApplyPutrefyCues()
     if inCombat then diag.combat = diag.combat + 1 end
     if dtBuffShown then diag.dtShown = diag.dtShown + 1 end
     if dtReady then diag.dtReady = diag.dtReady + 1 end
-    -- Once a second, not every tick: this enumerates pools.
-    diag.scanTick = (diag.scanTick or 0) + 1
-    if diag.scanTick % 10 == 0 then
-        local frames, anyShown, oursInPool = DiagScanBuffViewers()
-        diag.dtFrames  = math.max(diag.dtFrames or 0, frames)
-        diag.dtAnyShown = (diag.dtAnyShown or 0) + (anyShown > 0 and 1 or 0)
-        diag.dtOurs    = (diag.dtOurs or 0) + (oursInPool and 1 or 0)
-        diag.dtScans   = (diag.dtScans or 0) + 1
-    end
 
     local decided = {}
     local function decide(frame)
@@ -415,8 +348,7 @@ function addon:PrintPutrefyDiagnostic()
     for k, v in pairs(diag.seen) do seen[#seen + 1] = ("%s=%d"):format(k, v) end
     table.sort(seen)
     say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
-    say(("  watcher: entered=%d lockdown=%d affecting=%d errors=%d")
-        :format(diag.entered, diag.lockdown, diag.affecting, diag.errors))
+    say(("  watcher: entered=%d errors=%d"):format(diag.entered, diag.errors))
     if diag.lastError then say("  lastError: " .. diag.lastError:sub(1, 150)) end
     say("cooldown API probe (ok / errors):")
     local names = {}
@@ -428,66 +360,10 @@ function addon:PrintPutrefyDiagnostic()
             k, r.okCombat, r.errCombat, tostring(r.lastCombat), r.ok, tostring(r.last)))
         if r.error then say(("        ERR: %s"):format(r.error:sub(1, 90))) end
     end
-    say(("  buff row: scans=%d dtFramesInPool=%d anyShown=%d oursStillInPool=%d")
-        :format(diag.dtScans or 0, diag.dtFrames or 0, diag.dtAnyShown or 0, diag.dtOurs or 0))
 
     -- Seam 1: did the action-bar scan find the macro button?
     local tracked = (addon.trackedButtons or {}).putrefy or {}
     say(("scan: trackedButtons.putrefy = %d button(s)"):format(#tracked))
-    for i, button in ipairs(tracked) do
-        say(("  tracked #%d %s"):format(i, (button.GetName and button:GetName()) or "<anonymous>"))
-    end
-
-    -- Seam 2: what does every macro slot on the bars actually say?  This is the
-    -- one that answers "why was my macro not matched".
-    local macros = 0
-    addon:ForEachActionButton(function(button, name)
-        if not (button.IsVisible and button:IsVisible()) then return end
-        local spellID = addon:GetButtonSpellID(button)
-        local keys = addon:GetButtonMacroKeys(button)
-        local matched = keys.putrefy and "MATCHED" or "no"
-        -- Resolve the slot through the scanner's OWN resolver, not a copy.
-        -- Two of its four fallbacks, in the wrong order, made this report nil
-        -- bodies for buttons the scanner reads fine -- the instrument measuring
-        -- itself rather than the code.
-        local slot = addon:GetButtonActionSlot(button)
-        if slot then
-            local ok, aType, aId, aSub = pcall(GetActionInfo, slot)
-            if ok and aType == "macro" and aId then
-                macros = macros + 1
-                local okBody, text = pcall(GetMacroBody, aId)
-                -- Every id that fails here is a SPELL id (1233448 Dark
-                -- Transformation, 85948 Festering Strike, 43265 Death and
-                -- Decay), while every id that succeeds is a small macro index.
-                -- So `aId` is not always a macro index, and the namespaced API
-                -- may disagree with the global.  Print both, plus subType.
-                local cmBody
-                if C_Macro and C_Macro.GetMacroBody then
-                    local okCM, t2 = pcall(C_Macro.GetMacroBody, aId)
-                    cmBody = okCM and t2 or nil
-                end
-                local macroName
-                if GetMacroInfo then
-                    local okN, n = pcall(GetMacroInfo, aId)
-                    macroName = okN and n or nil
-                end
-                -- Report the WHOLE body on one line, and the containment test
-                -- separately.  Truncating at the first newline hid the very
-                -- text the match depends on -- every macro starts #showtooltip.
-                local body = okBody and text or nil
-                local flat = body and body:gsub("%s+", " "):gsub("^ ", "") or nil
-                local has = body and body:lower():find("putrefy", 1, true) and "yes" or "no"
-                say(("  %-14s slot=%-4s id=%-9s sub=%-8s matched=%-8s body=%-5s c_macro=%-5s name=%-10s hasPutrefy=%-4s spell=%s")
-                    :format(tostring(name), tostring(slot), tostring(aId), tostring(aSub), matched,
-                            body and #body or "NIL", cmBody and #cmBody or "NIL",
-                            tostring(macroName), body and has or "-", tostring(spellID)))
-                if flat then say(("      body: %s"):format(flat:sub(1, 160))) end
-            end
-        end
-    end)
-    if macros == 0 then
-        say("  no macro slots found on any visible action button")
-    end
 
     -- Seam 3: what is actually decorated, and what did each frame decide?
     local dtShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()

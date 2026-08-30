@@ -61,7 +61,6 @@ UIDropDownMenu_SetText
 UIDropDownMenu_SetWidth
 UIParent
 UISpecialFrames
-UnitAffectingCombat
 UtilityCooldownViewer
 _G
 hooksecurefunc
