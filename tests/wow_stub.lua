@@ -131,6 +131,11 @@ function W.newButton(texture)
     button.Icon._texture = texture or "Interface\\Icons\\Spell_Test"
     button.Icon._texCoord = { 0.08, 0.08, 0.08, 0.92, 0.92, 0.08, 0.92, 0.92 }
     button.Icon._masks = { "mask-one", "mask-two" }
+    -- The cooldown swipe.  Its VISIBILITY is the only cooldown signal that
+    -- survives taint in combat -- every numeric read raises there -- so a spec
+    -- that cannot model it cannot cover the one usable path.
+    button.cooldown = newFrame(button)
+    button.cooldown._shown = false
     return button
 end
 

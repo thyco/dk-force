@@ -217,6 +217,59 @@ local function DarkTransformationOnCooldown()
     return GetTime() < dtCooldownEndsAt
 end
 
+-- The spell's own cooldown, read from the button's swipe rather than from
+-- Blizzard.
+--
+-- Putrefy's cooldown is reduced dynamically in combat, so the learn-the-duration
+-- approach used for Dark Transformation cannot work for it -- there is no fixed
+-- number to learn.  The cooldown SWIPE's visibility can: it is a boolean, so it
+-- survives taint where every numeric read raises, and it tracks whatever the
+-- button is actually about to cast.
+--
+-- The global cooldown draws on that same frame, so it is filtered by timing how
+-- long the swipe has been up against this addon's own clock -- arithmetic on a
+-- number we own is never secret.  The cost is that a real cooldown is
+-- indistinguishable from a GCD for its first second and a half, so the grey
+-- arrives a GCD late.  That is the right way round: the alternative is the
+-- button flickering grey on every press.
+--
+-- Whether the GCD actually draws here has NOT been measured -- the probe that
+-- would have told us never ran.  If it turns out it does not, this filter is
+-- harmless and the grace can go to zero.
+local GCD_GRACE = 1.6
+local swipeSince = {}
+
+local function CooldownSwipeShown(frame)
+    local swipe = frame and (frame.cooldown or frame.Cooldown)
+    if not (swipe and swipe.IsShown) then return false end
+    local ok, shown = pcall(swipe.IsShown, swipe)
+    return ok and shown and true or false
+end
+
+local function OnOwnCooldown(frame)
+    if not CooldownSwipeShown(frame) then
+        swipeSince[frame] = nil
+        return false
+    end
+    local since = swipeSince[frame]
+    if not since then
+        -- First tick of this swipe: start the clock, claim nothing yet.
+        swipeSince[frame] = GetTime()
+        return false
+    end
+    local held = GetTime() - since
+    -- Recorded so the unmeasured question -- does the GCD draw on this frame? --
+    -- answers itself from normal play.  Many ~1.5s runs means it does and the
+    -- grace is earning its keep; only long runs means it does not.
+    diag.swipeMaxHeld = math.max(diag.swipeMaxHeld or 0, held)
+    if held < GCD_GRACE then
+        diag.swipeShort = (diag.swipeShort or 0) + 1
+    else
+        diag.swipeLong = (diag.swipeLong or 0) + 1
+    end
+    return held >= GCD_GRACE
+end
+
 local function DarkTransformationReady()
     -- Usability survives taint where the cooldown does not, so it is still
     -- worth asking -- but it deliberately excludes cooldown, which is why the
@@ -241,7 +294,7 @@ end
 -- Only the glow is gated on combat, following the rule in Festering.lua: a glow
 -- is an interrupt and would be noise out of combat, while a desaturation reads
 -- as a standing "not this one" and is useful while setting up.
-function addon:EvaluatePutrefyState(settings, nextCast, dtBuffShown, dtReady, inCombat)
+function addon:EvaluatePutrefyState(settings, nextCast, dtBuffShown, dtReady, inCombat, onCooldown)
     if not (settings and settings.enabled) then return false, false end
 
     local wanted
@@ -253,6 +306,10 @@ function addon:EvaluatePutrefyState(settings, nextCast, dtBuffShown, dtReady, in
     else
         return false, false
     end
+
+    -- A spell on its own cooldown is never the right press, whatever else is
+    -- true of the rotation.
+    if onCooldown then wanted = false end
 
     return (wanted and inCombat and settings.glow) or false,
            ((not wanted) and settings.dim) or false
@@ -332,7 +389,8 @@ local function ApplyPutrefyCues()
         local answer = decided[frame]
         if not answer then
             local glow, dim = addon:EvaluatePutrefyState(
-                settings, NextCastFor(frame), dtBuffShown, dtReady, inCombat)
+                settings, NextCastFor(frame), dtBuffShown, dtReady, inCombat,
+                OnOwnCooldown(frame))
             answer = { glow = glow, dim = dim }
             decided[frame] = answer
             local nextCast = NextCastFor(frame)
@@ -419,6 +477,8 @@ function addon:PrintPutrefyDiagnostic()
     table.sort(seen)
     say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
     say(("  watcher: entered=%d errors=%d"):format(diag.entered, diag.errors))
+    say(("  own cooldown: shortSwipeTicks=%d longSwipeTicks=%d longestHeld=%.1fs")
+        :format(diag.swipeShort or 0, diag.swipeLong or 0, diag.swipeMaxHeld or 0))
     say(("  cooldown tracking: learnedDuration=%s endsAt=%s remaining=%s dtCasts=%d lastCastSeen=%s")
         :format(tostring(dtCooldownSeconds), tostring(dtCooldownEndsAt),
                 dtCooldownEndsAt and ("%.1f"):format(dtCooldownEndsAt - GetTime()) or "-",

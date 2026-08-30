@@ -531,4 +531,44 @@ W.advance(0.2)
 check("GCD-length reading does not grey the DT step", W.glowingChildrenOf(macroButton), 1)
 check("GCD-length reading leaves it undimmed", #W.dimTexturesOn(macroButton), 0)
 
+-- ---------------------------------------------------------------
+-- The spell's own cooldown, read from the button rather than from Blizzard.
+--
+-- Putrefy's cooldown is reduced dynamically in combat, so the learn-and-count
+-- approach used for Dark Transformation cannot work for it. The cooldown
+-- SWIPE's visibility can: it is a boolean, so it survives taint, and it tracks
+-- whatever the button is actually about to cast. The global cooldown draws on
+-- that same frame, so it is filtered by timing how long the swipe has been up
+-- against the addon's own clock.
+-- ---------------------------------------------------------------
+
+-- 29. A swipe shorter than a global cooldown is a global cooldown, and must not
+--     grey anything. Otherwise the button flickers grey on every single press --
+--     the exact flicker excluding resources was meant to prevent.
+reset()
+W.advance(0.2)
+check("buff up, no swipe: glowing", W.glowingChildrenOf(cdmIcon), 1)
+cdmIcon.cooldown:Show()
+W.advance(1.0)
+check("swipe up for 1.0s: still glowing, treated as the GCD", W.glowingChildrenOf(cdmIcon), 1)
+check("swipe up for 1.0s: not greyed", #W.dimTexturesOn(cdmIcon), 0)
+
+-- 30. Held longer than a GCD, it is a real cooldown and the button greys.
+W.advance(1.0)
+check("swipe held past a GCD: greyed", #W.dimTexturesOn(cdmIcon), 1)
+check("swipe held past a GCD: no glow", W.glowingChildrenOf(cdmIcon), 0)
+
+-- 31. The swipe clearing restores the glow immediately -- the delay is on the
+--     way in only, so the cue never lags behind the spell becoming available.
+cdmIcon.cooldown:Hide()
+W.advance(0.2)
+check("swipe cleared: glows again at once", W.glowingChildrenOf(cdmIcon), 1)
+
+-- 32. A second short swipe starts the timing over rather than resuming, or
+--     every press after a real cooldown would grey instantly.
+cdmIcon.cooldown:Show()
+W.advance(0.5)
+check("a fresh short swipe is timed from scratch", W.glowingChildrenOf(cdmIcon), 1)
+cdmIcon.cooldown:Hide()
+
 W.report("Putrefy rotational cue")
