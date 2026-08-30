@@ -7,8 +7,6 @@ local addonName, addon = ...
 local PAGE_ITEMS = {
     { text = "Festering Scythe",         value = "festering" },
     { text = "Sudden Doom",              value = "suddendoom" },
-    { text = "Death Coil (Sudden Doom)", value = "deathcoil" },
-    { text = "Epidemic (Sudden Doom)",   value = "epidemic" },
     { text = "Blightfall & Soul Reaper", value = "blightfall" },
     { text = "Stand In Death and Decay", value = "blooddndmissing" },
 }
@@ -403,7 +401,6 @@ function addon:CreateConfigPanel(standalone)
 
     local function RefreshTracking()
         if selectedKey == "festering" and addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
-        if (selectedKey == "deathcoil" or selectedKey == "epidemic") and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
         if selectedKey == "suddendoom" and addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
         if selectedKey == "blooddndmissing" and addon.RefreshDnDMissingGlows then addon:RefreshDnDMissingGlows() end
         if selectedKey == "blightfall" and addon.RefreshBlightfallTracker then addon:RefreshBlightfallTracker() end
@@ -415,16 +412,7 @@ function addon:CreateConfigPanel(standalone)
         if page.previewIcon then page.previewIcon:Show() end
         local settings
         if selectedKey == "festering" then settings = DKForceDB.spells.festeringScythe
-        elseif selectedKey == "deathcoil" then settings = DKForceDB.spells.deathCoil
-        elseif selectedKey == "epidemic" then settings = DKForceDB.spells.epidemic
-        elseif selectedKey == "suddendoom" then
-            -- suddenDoomGlow is the master switch only; appearance comes from
-            -- Death Coil, which is what this page's preview icon represents.
-            -- Previewing suddenDoomGlow's own colour would show a glow the game
-            -- never draws.
-            if not (DKForceDB.suddenDoomGlow and DKForceDB.suddenDoomGlow.enabled) then return end
-            settings = DKForceDB.spells.deathCoil
-        end
+        elseif selectedKey == "suddendoom" then settings = DKForceDB.suddenDoomGlow end
         if selectedKey == "blooddndmissing" then settings = DKForceDB.bloodDndMissing end
         if selectedKey == "blightfall" then settings = DKForceDB.blightfallChain end
         if not settings or not settings.enabled then return end
@@ -460,8 +448,7 @@ function addon:CreateConfigPanel(standalone)
 
     local function GlowSettingsFor(key)
         if key == "festering" then return DKForceDB.spells.festeringScythe end
-        if key == "deathcoil" then return DKForceDB.spells.deathCoil end
-        if key == "epidemic" then return DKForceDB.spells.epidemic end
+        if key == "suddendoom" then return DKForceDB.suddenDoomGlow end
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
         if key == "blightfall" then return DKForceDB.blightfallChain end
     end
@@ -493,7 +480,7 @@ function addon:CreateConfigPanel(standalone)
         page.settingsCard = CreateCard(page, titleText)
         page.previewCard = CreateCard(page, "Live Preview")
         page.appearanceCard = CreateCard(page, "Glow Colour")
-        if key == "festering" or key == "deathcoil" or key == "epidemic" then
+        if key == "festering" then
             page.warningCard = CreateCard(page, "Warning timing")
             page.ghoulCard = CreateCard(page, "Lesser Ghoul reminder")
         end
@@ -521,7 +508,6 @@ function addon:CreateConfigPanel(standalone)
             end)
         -- Sudden Doom is enabled once from its dedicated page.  The Death
         -- Coil and Epidemic pages remain only for their individual styling.
-        if key == "deathcoil" or key == "epidemic" then page.enable:Hide() end
         page.previewIcon = CreatePreview(page.previewCard, spellID)
         BuildColorCard(page, page.appearanceCard, key)
         if key == "blooddndmissing" then
@@ -569,7 +555,7 @@ function addon:CreateConfigPanel(standalone)
 
         page.refresh = function()
             page.selector.refresh()
-            if key ~= "deathcoil" and key ~= "epidemic" then page.enable.refresh() end
+            page.enable.refresh()
             page.refreshColor()
             if page.timing then page.timing.refresh(); page.combat.refresh(); page.grace.refresh(); page.ghoul.refresh(); page.ghoulDim.refresh() end
             if page.threshold then page.threshold.refresh() end
@@ -583,6 +569,7 @@ function addon:CreateConfigPanel(standalone)
         page:SetAllPoints(); page.layoutKind = "suddendoom"
         page.glowCard = CreateCard(page, "Sudden Doom Glow")
         page.previewCard = CreateCard(page, "Sudden Doom Preview")
+        page.appearanceCard = CreateCard(page, "Glow Colour")
         AddSelector(page, page.glowCard)
         local function settings() return DKForceDB.suddenDoomGlow end
         local function changed()
@@ -590,15 +577,15 @@ function addon:CreateConfigPanel(standalone)
         end
         page.enable = CreateCheck(page.glowCard, "Enable Sudden Doom glow", 14, -76,
             function() return settings().enabled end, function(v) settings().enabled = v; changed() end)
+        BuildColorCard(page, page.appearanceCard, "suddendoom")
         page.hint = CreateText(page.glowCard,
-            "Glows Death Coil and Epidemic on your action bars and in the Cooldown Manager. "
-            .. "Set their colours on the Death Coil and Epidemic pages.",
+            "Glows Death Coil and Epidemic on your action bars and in the Cooldown Manager.",
             14, -108, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
 
         page.previewIcon = CreatePreview(page.previewCard, 81340)
         page.refresh = function()
             page.selector.refresh()
-            page.enable.refresh()
+            page.enable.refresh(); page.refreshColor()
             RefreshPreview(page)
         end
         pages.suddendoom = page
@@ -656,8 +643,6 @@ function addon:CreateConfigPanel(standalone)
     end
 
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
-    BuildGlowPage("deathcoil", "Death Coil - Sudden Doom", addon.SPELLS.DEATH_COIL.id)
-    BuildGlowPage("epidemic", "Epidemic - Sudden Doom", addon.SPELLS.EPIDEMIC.id)
     BuildSuddenDoomPage()
     BuildGlowPage("blooddndmissing", "Blood - Stand In Death and Decay", addon.SPELLS.DEATH_AND_DECAY.id)
     BuildBlightfallPage()
@@ -683,13 +668,12 @@ function addon:CreateConfigPanel(standalone)
                 if card then card:ClearAllPoints() end
             end
             if page.layoutKind == "suddendoom" then
-                -- No colour card here any more, so both columns run full height.
                 page.glowCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.glowCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
-                page.glowCard:SetWidth(leftWidth)
+                page.glowCard:SetSize(leftWidth, topHeight)
                 page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
-                page.previewCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
-                page.previewCard:SetWidth(rightWidth)
+                page.previewCard:SetSize(rightWidth, topHeight)
+                page.appearanceCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, lowerY)
+                page.appearanceCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
             elseif page.layoutKind == "festering" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -917,11 +901,7 @@ function addon:CreateConfigPanel(standalone)
         testActive = not testActive
         if testActive then
             if selectedKey == "festering" then addon:TestFesteringGlow(); addon:TestScourgeDim()
-            elseif selectedKey == "deathcoil" then addon:TestSuddenDoomGlow("deathCoil")
-            elseif selectedKey == "epidemic" then addon:TestSuddenDoomGlow("epidemic")
-            elseif selectedKey == "suddendoom" then
-                addon:TestSuddenDoomGlow("deathCoil")
-                addon:TestSuddenDoomGlow("epidemic")
+            elseif selectedKey == "suddendoom" then addon:TestSuddenDoomGlow()
             elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
             elseif selectedKey == "blightfall" then addon:TestBlightfallTracker() end
             testButton:SetText("Stop Test")

@@ -104,13 +104,9 @@ addon.DEFAULT_DB = {
     configSpecView    = "auto",
     spells = {
         festeringScythe = CopyTable(DEFAULT_GLOW_SETTINGS),
-        deathCoil       = CopyTable(DEFAULT_GLOW_SETTINGS),
-        epidemic        = CopyTable(DEFAULT_GLOW_SETTINGS),
     },
-    -- Only `enabled` is read: this is the master switch for the Sudden Doom
-    -- feature.  Appearance comes from the per-spell Death Coil and Epidemic
-    -- tables above, on action bars and in the Cooldown Manager alike, so one
-    -- spell cannot glow two different colours in two places.
+    -- The whole Sudden Doom feature: one switch and one colour, applied to
+    -- Death Coil and Epidemic alike, on action bars and in the Cooldown Manager.
     suddenDoomGlow = CopyTable(DEFAULT_GLOW_SETTINGS),
     -- Glow while you are standing outside your own Death and Decay.
     bloodDndMissing = {
@@ -300,17 +296,6 @@ initFrame:SetScript("OnEvent", function(_, event)
             for k, v in pairs(addon.DEFAULT_DB.spells.festeringScythe) do
                 if DKForceDB.spells.festeringScythe[k] == nil then
                     DKForceDB.spells.festeringScythe[k] = type(v) == "table" and CopyTable(v) or v
-                end
-            end
-        end
-        for _, spellKey in ipairs({ "deathCoil", "epidemic" }) do
-            if not DKForceDB.spells[spellKey] then
-                DKForceDB.spells[spellKey] = CopyTable(addon.DEFAULT_DB.spells[spellKey])
-            else
-                for k, v in pairs(addon.DEFAULT_DB.spells[spellKey]) do
-                    if DKForceDB.spells[spellKey][k] == nil then
-                        DKForceDB.spells[spellKey][k] = type(v) == "table" and CopyTable(v) or v
-                    end
                 end
             end
         end

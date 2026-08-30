@@ -4,12 +4,12 @@ local suddenDoomOverlays   = {}
 local cdmSuddenDoomOverlays = {}
 local suddenDoomActive = false
 
--- Per-spell appearance everywhere.  The Death Coil page colours the Death Coil
--- icon wherever it appears, the Epidemic page likewise -- there is no separate
--- Cooldown Manager colour, because both displays are live at once now and one
--- spell glowing two different colours in two places would be incoherent.
-local function GetSuddenDoomOverlaySettings(overlay)
-    return DKForceDB.spells[overlay._spellKey]
+-- One table for the whole feature: the same colour on Death Coil and Epidemic,
+-- on action bars and in the Cooldown Manager alike.  The per-spell tables that
+-- used to supply this are gone -- it is one proc, and colouring its two spenders
+-- differently was a setting nobody wanted.
+local function GetSuddenDoomOverlaySettings()
+    return DKForceDB.suddenDoomGlow
 end
 
 -- Both tables, always.  Action bars and the Cooldown Manager are two views of
@@ -20,10 +20,7 @@ local function ForEachOverlay(fn)
     for _, overlay in pairs(cdmSuddenDoomOverlays) do fn(overlay) end
 end
 
--- The "Enable Sudden Doom glow" checkbox on the Sudden Doom page is the master
--- switch for the whole feature, and the only field of `suddenDoomGlow` anything
--- reads.  The per-spell Death Coil and Epidemic tables supply the appearance,
--- on action bars and in the Cooldown Manager alike.
+-- The "Enable Sudden Doom glow" checkbox is the master switch for the feature.
 local function SuddenDoomEnabled()
     local s = DKForceDB and DKForceDB.suddenDoomGlow
     return (s and s.enabled) and true or false
@@ -37,7 +34,7 @@ end
 function addon:CreateSuddenDoomOverlays()
     for _, overlay in pairs(suddenDoomOverlays) do
         if overlay._glowActive then
-            local s = GetSuddenDoomOverlaySettings(overlay)
+            local s = GetSuddenDoomOverlaySettings()
             local gt = s and addon:GetGlowTypeByID(s.glowType)
             if gt and gt.stop then pcall(gt.stop, overlay) end
         end
@@ -93,7 +90,7 @@ function addon:StopSuddenDoomGlows()
     suddenDoomActive = false
     ForEachOverlay(function(overlay)
         if overlay._glowActive then
-            local s = GetSuddenDoomOverlaySettings(overlay)
+            local s = GetSuddenDoomOverlaySettings()
             local gt = s and addon:GetGlowTypeByID(s.glowType)
             if gt and gt.stop then pcall(gt.stop, overlay) end
             overlay._glowActive = false
@@ -107,7 +104,7 @@ function addon:ShowSuddenDoomGlows()
     local masterEnabled = SuddenDoomEnabled()
     ForEachOverlay(function(overlay)
         local target = overlay._targetFrame
-        local s = GetSuddenDoomOverlaySettings(overlay)
+        local s = GetSuddenDoomOverlaySettings()
         if masterEnabled and target and target:IsVisible() and s and s.enabled then
             overlay:Show()
             if not overlay._glowActive then
@@ -128,12 +125,14 @@ function addon:RefreshSuddenDoomGlows()
     end
 end
 
-function addon:TestSuddenDoomGlow(spellKey)
+-- No per-spell filter: one colour covers both spenders, so a test lights every
+-- Sudden Doom target there is.
+function addon:TestSuddenDoomGlow()
     local shown = 0
     if not SuddenDoomEnabled() then return shown end
     ForEachOverlay(function(overlay)
-        if overlay._spellKey == spellKey and overlay._targetFrame and overlay._targetFrame:IsVisible() then
-            local s = GetSuddenDoomOverlaySettings(overlay)
+        if overlay._targetFrame and overlay._targetFrame:IsVisible() then
+            local s = GetSuddenDoomOverlaySettings()
             overlay:Show()
             local gt = addon:GetGlowTypeByID(s.glowType)
             if gt and gt.start then pcall(gt.start, overlay, s) end
