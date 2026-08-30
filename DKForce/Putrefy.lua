@@ -44,6 +44,38 @@ local putrefyTestActive = false
 -- afterwards and still answer "did this ever happen".  Reset by /reload.
 local diag = { ticks = 0, combat = 0, dtShown = 0, dtReady = 0, glow = 0, dim = 0, seen = {} }
 
+-- Diagnosis only.  Is the frame we cached still the one the Cooldown Manager is
+-- using for this buff?  Its item frames come from a pool: if ours is released
+-- and the buff is then shown on a different frame, our reference stays hidden
+-- forever and the cue can never fire.  Comparing "any active DT buff frame is
+-- shown" against "OUR frame is shown" separates a stale reference from a buff
+-- row that genuinely never shows.
+local function DiagScanBuffViewers()
+    local frames, anyShown, oursInPool = 0, 0, false
+    for _, viewer in ipairs({ BuffIconCooldownViewer, BuffBarCooldownViewer }) do
+        local pool = viewer and viewer.itemFramePool
+        if pool and pool.EnumerateActive then
+            for item in pool:EnumerateActive() do
+                local id
+                if item.GetCooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+                    local ok, cid = pcall(item.GetCooldownID, item)
+                    if ok and cid then
+                        local ok2, info = pcall(C_CooldownViewer.GetCooldownViewerCooldownInfo, cid)
+                        id = ok2 and info and info.spellID
+                    end
+                end
+                if id == addon.SPELLS.DARK_TRANSFORMATION.id then
+                    frames = frames + 1
+                    local okShown, shown = pcall(item.IsShown, item)
+                    if okShown and shown then anyShown = anyShown + 1 end
+                    if item == darkTransformationBuffFrame then oursInPool = true end
+                end
+            end
+        end
+    end
+    return frames, anyShown, oursInPool
+end
+
 local function PutrefySettings()
     return DKForceDB and DKForceDB.putrefy
 end
@@ -169,6 +201,15 @@ local function ApplyPutrefyCues()
     if inCombat then diag.combat = diag.combat + 1 end
     if dtBuffShown then diag.dtShown = diag.dtShown + 1 end
     if dtReady then diag.dtReady = diag.dtReady + 1 end
+    -- Once a second, not every tick: this enumerates pools.
+    diag.scanTick = (diag.scanTick or 0) + 1
+    if diag.scanTick % 10 == 0 then
+        local frames, anyShown, oursInPool = DiagScanBuffViewers()
+        diag.dtFrames  = math.max(diag.dtFrames or 0, frames)
+        diag.dtAnyShown = (diag.dtAnyShown or 0) + (anyShown > 0 and 1 or 0)
+        diag.dtOurs    = (diag.dtOurs or 0) + (oursInPool and 1 or 0)
+        diag.dtScans   = (diag.dtScans or 0) + 1
+    end
 
     local decided = {}
     local function decide(frame)
@@ -253,6 +294,8 @@ function addon:PrintPutrefyDiagnostic()
     for k, v in pairs(diag.seen) do seen[#seen + 1] = ("%s=%d"):format(k, v) end
     table.sort(seen)
     say("  nextCast seen: " .. (#seen > 0 and table.concat(seen, " ") or "none"))
+    say(("  buff row: scans=%d dtFramesInPool=%d anyShown=%d oursStillInPool=%d")
+        :format(diag.dtScans or 0, diag.dtFrames or 0, diag.dtAnyShown or 0, diag.dtOurs or 0))
 
     -- Seam 1: did the action-bar scan find the macro button?
     local tracked = (addon.trackedButtons or {}).putrefy or {}
