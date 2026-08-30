@@ -391,6 +391,10 @@ function addon:CreateConfigPanel(standalone)
     testButton:SetPoint("LEFT", rescanButton, "RIGHT", 8, 0)
     testButton:SetText("Test")
 
+    -- Forward-declared: RefreshPreview reads it, but the mapping itself is
+    -- defined below the pages that need to close over it.
+    local GlowSettingsFor
+
     local function StopPreview(page)
         if not page then return end
         for _, glowType in ipairs(addon.GLOW_TYPES or {}) do
@@ -417,11 +421,7 @@ function addon:CreateConfigPanel(standalone)
         StopPreview(page)
         if not page then return end
         if page.previewIcon then page.previewIcon:Show() end
-        local settings
-        if selectedKey == "festering" then settings = DKForceDB.spells.festeringScythe
-        elseif selectedKey == "suddendoom" then settings = DKForceDB.suddenDoomGlow end
-        if selectedKey == "blooddndmissing" then settings = DKForceDB.bloodDndMissing end
-        if selectedKey == "blightfall" then settings = DKForceDB.blightfallChain end
+        local settings = GlowSettingsFor(selectedKey)
         if not settings or not settings.enabled then return end
         local target = page.previewIcon
         local glowType = addon:GetGlowTypeByID(settings.glowType)
@@ -453,7 +453,7 @@ function addon:CreateConfigPanel(standalone)
         page[fieldName or "selector"] = selector
     end
 
-    local function GlowSettingsFor(key)
+    function GlowSettingsFor(key)
         if key == "festering" then return DKForceDB.spells.festeringScythe end
         if key == "suddendoom" then return DKForceDB.suddenDoomGlow end
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
@@ -617,8 +617,11 @@ function addon:CreateConfigPanel(standalone)
             function() return settings().enabled end,
             function(value)
                 settings().enabled = value
-                -- Both the Cooldown Manager rows and the action-bar copies are
-                -- only built while it is enabled, so turning it on needs both.
+                -- Only the Cooldown Manager rows are gated on this switch --
+                -- CDMHook checks it before registering.  CreatePutrefyOverlays
+                -- builds the bar copies unconditionally, unlike
+                -- CreateDnDMissingOverlays, so this rescan is not what gates
+                -- them; it is here to pick up a macro that newly qualifies.
                 if addon.RefreshCDMTrackedItems then addon:RefreshCDMTrackedItems() end
                 if addon.ScanAllButtons then addon:ScanAllButtons() end
                 changed()

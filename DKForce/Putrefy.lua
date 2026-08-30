@@ -31,6 +31,13 @@ local cdmPutrefyFrames = {}
 local darkTransformationBuffFrame = nil
 local putrefyCuesActive = false
 
+-- Set by the options-panel Test, read by ApplyPutrefyCues.  The watcher is
+-- level-triggered -- every tick calls Show(predicate) on both groups, and a
+-- frame the predicate rejects is cleared -- so without this a Test lighting
+-- both groups would be wiped by the very next real-state tick, out of combat
+-- that means within 100ms.  See the early return in ApplyPutrefyCues.
+local putrefyTestActive = false
+
 local function PutrefySettings()
     return DKForceDB and DKForceDB.putrefy
 end
@@ -122,6 +129,7 @@ end
 
 function addon:StopPutrefyCues()
     putrefyCuesActive = false
+    putrefyTestActive = false
     putrefyGlowGroup:Hide()
     putrefyDimGroup:Hide()
 end
@@ -130,6 +138,14 @@ end
 -- answer is cached for the tick so the two groups cannot disagree about one
 -- frame -- a frame is glowing or greyed, never both.
 local function ApplyPutrefyCues()
+    -- The safety valve: a frame set by TestPutrefyCue and cleared only here or
+    -- by StopPutrefyCues has no other way off, so leaving it were combat ever
+    -- began would freeze the cue rather than merely mis-preview it.  Bounding
+    -- the flag to "out of combat" caps the damage at the one time this cue
+    -- does not matter.  Checked before the early return it guards.
+    if putrefyTestActive and InCombatLockdown() then putrefyTestActive = false end
+    if putrefyTestActive then return end
+
     local settings = PutrefySettings()
     if not (settings and settings.enabled) then
         if putrefyCuesActive then addon:StopPutrefyCues() end
@@ -165,10 +181,14 @@ end
 
 -- The options-panel Test.  A preview, not a reminder: it ignores combat and the
 -- Dark Transformation state and simply lights every visible target, the way
--- every other Test here does.
+-- every other Test here does.  Both groups: the feature has two decorations
+-- and a separate "Desaturate while it is not" toggle, so the preview shows
+-- both rather than only the glow.  putrefyTestActive is what keeps this on
+-- screen against the watcher's own tick -- see ApplyPutrefyCues.
 function addon:TestPutrefyCue()
     if not addon:IsPutrefyEnabled() then return 0 end
-    local count = putrefyGlowGroup:Show()
+    putrefyTestActive = true
+    local count = putrefyGlowGroup:Show() + putrefyDimGroup:Show()
     if count == 0 then
         print("|cffcc0000DK Force:|r No visible Putrefy icon found. Put your Putrefy macro on an action bar, or add Putrefy to the Cooldown Manager, then use Rescan Bars.")
     end

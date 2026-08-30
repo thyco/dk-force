@@ -160,6 +160,12 @@ end
 -- they get different answers in the same tick.  A rejected frame is cleared,
 -- not merely skipped -- the caller is driving per-frame state and expects the
 -- decoration to come off.
+--
+-- Asymmetric with DimGroup:Show by design: this short-circuits on `visible`
+-- before the predicate is ever called, so an invisible target's predicate
+-- answer is never asked for.  DimGroup:Show calls its predicate unconditionally
+-- and defers the visibility check to ApplyDim.  Putrefy's memoised `decide`
+-- depends on tolerating both -- see case 14b in putrefy_spec.lua.
 function GlowGroup:Show(shouldDecorate)
     local applied = 0
     self:ForEach(function(overlay)

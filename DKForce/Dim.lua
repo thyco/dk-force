@@ -208,6 +208,12 @@ local function ApplyDim(record)
     return 1
 end
 
+-- Asymmetric with GlowGroup:Show by design: the predicate here is called
+-- unconditionally, even for a hidden target, and it is ApplyDim (not this
+-- function) that checks visibility and no-ops.  GlowGroup:Show instead
+-- short-circuits on visibility before its predicate is ever called.  Putrefy's
+-- memoised `decide` depends on tolerating both -- see case 14b in
+-- putrefy_spec.lua.
 function DimGroup:Show(shouldDecorate)
     local applied = 0
     self:ForEach(function(record)
@@ -257,9 +263,15 @@ end
 -- Returns whether a record was actually created, so the caller can decide what
 -- a new target means for a reminder that is already on screen.  Unlike
 -- GlowGroup's overlays, a re-registered frame would not orphan anything --
--- AttachDimTexture caches its texture on the frame itself -- but the dedup
--- still matters: without it, a frame CDMHook re-registers on every refresh
--- would redundantly re-decide "already dimmed" on every one of those calls.
+-- AttachDimTexture caches its texture on the frame itself -- but the dedup is
+-- load-bearing on the combat path, not merely a redundant redecision.
+-- GetCDMSpellID is not combat-gated the way GetCDMItemSpellID is, so
+-- CDMHook.Register can reach here mid-combat.  BuildRecord always re-runs
+-- CacheIcon, and CacheIcon exists precisely so a combat-time texture read is
+-- never needed; skipping it here would let a mid-combat re-registration
+-- overwrite a good cached texture with a secret value, and a later failed
+-- live read would then fall through to the black-veil branch in ApplyDim
+-- instead of the greyed icon.
 function DimGroup:RegisterCDMFrame(frame)
     if self._cdm[frame] then return false end
     local record = BuildRecord(frame)

@@ -161,6 +161,18 @@ W.advance(0.2)
 check("DT step, insufficient power: still glows", W.glowingChildrenOf(macroButton), 1)
 check("DT step, insufficient power: not greyed", #W.dimTexturesOn(macroButton), 0)
 
+-- 9d. A cooldown inside the GCD band but above zero must still read as ready.
+--     9b proves a real cooldown (5s) greys the button and 9c proves 0 does
+--     not; neither touches the 0 < d <= 1.5 band DarkTransformationReady
+--     excludes as the GCD.  Getting that boundary wrong -- `> 0` instead of
+--     `> 1.5` -- would grey the button on every single GCD.
+reset()
+buttonSpell[macroButton] = DT_ID
+dtCooldown = 1.0
+W.advance(0.2)
+check("DT step, GCD-length cooldown: still glows", W.glowingChildrenOf(macroButton), 1)
+check("DT step, GCD-length cooldown: not greyed", #W.dimTexturesOn(macroButton), 0)
+
 -- 10. Dark Transformation comes up and the sequence advances: both agree again.
 reset()
 W.advance(0.2)
@@ -226,12 +238,99 @@ W.advance(0.5)
 check("no buff row: no glow", W.glowingChildrenOf(macroButton), 0)
 check("no buff row: no grey", #W.dimTexturesOn(macroButton), 0)
 
--- 16. Test lights every visible target regardless of state, and reports it.
+-- 16. Test lights every visible target regardless of state, and reports it --
+--     both decorations, on both targets: the feature ships a glow AND a
+--     separate "Desaturate while it is not" toggle, so the Live Preview must
+--     show both rather than only the glow.
 reset()
 addon:RegisterCDMDarkTransformationBuffFrame(dtBuffRow)
-check("test lights both targets", addon:TestPutrefyCue(), 2)
+check("test lights both decorations on both targets", addon:TestPutrefyCue(), 4)
 reset()
 settings.enabled = false
 check("test while disabled: nothing", addon:TestPutrefyCue(), 0)
+
+-- ---------------------------------------------------------------
+-- The Test's preview flag, and its one escape hatch.
+-- ---------------------------------------------------------------
+-- ApplyPutrefyCues is level-triggered: every tick it calls Show(predicate) on
+-- both groups, and a frame the predicate rejects is cleared.  Without a flag,
+-- the tick right after TestPutrefyCue would evaluate the real (likely unlit)
+-- state and wipe the preview within 100ms -- the reviewer measured 2 frames
+-- lit, 0 after one tick.  putrefyTestActive is what makes the Test survive,
+-- and it must have a way off that owes nothing to the panel, or the cue could
+-- freeze for good.
+
+-- 17. Test survives a watcher tick out of combat.
+reset()
+W.inCombat = false
+addon:TestPutrefyCue()
+check("test: glowing before the tick", W.glowingChildrenOf(macroButton), 1)
+check("test: greyed before the tick", #W.dimTexturesOn(macroButton), 1)
+W.advance(0.2)
+check("test survives a watcher tick: still glowing", W.glowingChildrenOf(macroButton), 1)
+check("test survives a watcher tick: still greyed", #W.dimTexturesOn(macroButton), 1)
+
+-- 18. Entering combat clears the preview -- the safety valve.  The DT buff is
+--     left hidden here so the real evaluation (glow off, grey on) disagrees
+--     with the preview (both on): the glow going out proves the switch to
+--     real state actually happened, rather than merely coinciding with it.
+reset()
+W.inCombat = false
+dtBuffRow:Hide()
+addon:TestPutrefyCue()
+W.advance(0.2)
+check("preview still up out of combat", W.glowingChildrenOf(macroButton), 1)
+W.inCombat = true
+W.advance(0.2)
+check("combat clears the preview: glow drops to the real answer", W.glowingChildrenOf(macroButton), 0)
+check("combat clears the preview: grey matches the real answer", #W.dimTexturesOn(macroButton), 1)
+
+-- 19. Stop (via StopPutrefyCues, which is what the panel's Stop Test button
+--     reaches through StopAll -- see addon:StopAll in Core.lua) clears the
+--     flag as well as the display.  If only the display were cleared, the
+--     flag would still be set and every following tick would keep returning
+--     early: the cue would look stopped but never run again.  Real conditions
+--     here want it lit (DT up, casting Putrefy, in combat), so a tick after
+--     Stop relighting it is what proves the watcher actually unfroze.
+reset()
+addon:TestPutrefyCue()
+check("previewing before stop", W.glowingChildrenOf(macroButton), 1)
+addon:StopPutrefyCues()
+check("stop clears the display immediately", W.glowingChildrenOf(macroButton), 0)
+W.advance(0.2)
+check("stop unfreezes the watcher: real state re-applies", W.glowingChildrenOf(macroButton), 1)
+
+-- ---------------------------------------------------------------
+-- Lifecycle: rescan and registration-while-disabled.
+-- ---------------------------------------------------------------
+
+-- 20. A rescan must not orphan the previous glow overlay.  Without
+--     ClearBarOverlays() before BuildBarOverlays() in CreatePutrefyOverlays,
+--     a still-tracked button's entry in the group's bar table is replaced
+--     rather than torn down, and the old overlay -- still parented to the
+--     button, still glowing -- is never reachable again to switch off.
+--     W.glowCount() counts every glowing frame that exists anywhere, orphan
+--     included, which is what catches this; glowingChildrenOf would not,
+--     because under the bug the orphan is also never unparented and would
+--     still be counted as one of the button's own children.
+reset()
+W.advance(0.2)
+check("glowing before rescan", W.glowCount(), 2)
+addon:CreatePutrefyOverlays()
+W.advance(0.2)
+check("rescan: no orphaned glow left behind", W.glowCount(), 2)
+check("rescan: no duplicate dim texture on the macro button", #macroButton._textures, 1)
+
+-- 21. Registering a fresh CDM frame while disabled does not decorate it once
+--     re-enabled -- CDMHook gates registration on the same switch the display
+--     reads from, mirroring scourge_dim_spec case 10.
+reset()
+settings.enabled = false
+local disabledFrame = W.newButton()
+addon:RegisterCDMPutrefyFrame(disabledFrame)
+settings.enabled = true
+W.advance(0.2)
+check("registered while disabled: no glow", W.glowingChildrenOf(disabledFrame), 0)
+check("registered while disabled: no grey", #W.dimTexturesOn(disabledFrame), 0)
 
 W.report("Putrefy rotational cue")
