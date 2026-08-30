@@ -38,9 +38,21 @@ addon.GetButtonSpellID = function(_, button) return buttonSpell[button] end
 
 -- Dark Transformation's own readiness, which is what the DT step is judged on.
 local dtUsable, dtInsufficientPower, dtCooldown = true, false, 0
+-- In combat, 12.1 hands addon code SECRET values. Touching one from tainted
+-- execution raises rather than returning a number, so a table modelling it must
+-- raise on access -- which is exactly what a stub returning a plain number can
+-- never catch, and why this shipped broken.
+local secretCooldown = false
+local function CooldownInfo()
+    if not secretCooldown then return { duration = dtCooldown } end
+    return setmetatable({}, { __index = function(_, key)
+        error(("Attempt to compare field '%s' (a secret number value, while execution tainted by 'DKForce')")
+            :format(tostring(key)))
+    end })
+end
 C_Spell = {
     IsSpellUsable    = function() return dtUsable, dtInsufficientPower end,
-    GetSpellCooldown = function() return { duration = dtCooldown } end,
+    GetSpellCooldown = function() return CooldownInfo() end,
 }
 
 W.load(GLOW_SOURCE, addon)
@@ -118,6 +130,7 @@ addon:RegisterCDMDarkTransformationBuffFrame(dtBuffRow)
 local function reset()
     settings.enabled, settings.glow, settings.dim = true, true, true
     dtUsable, dtInsufficientPower, dtCooldown = true, false, 0
+    secretCooldown = false
     buttonSpell[macroButton] = PUTREFY_ID
     dtBuffRow:Show()
     macroButton:Show(); cdmIcon:Show()
@@ -332,5 +345,26 @@ settings.enabled = true
 W.advance(0.2)
 check("registered while disabled: no glow", W.glowingChildrenOf(disabledFrame), 0)
 check("registered while disabled: no grey", #W.dimTexturesOn(disabledFrame), 0)
+
+-- The 12.1 secret-value hazard, and the bug that shipped.
+--
+-- A pcall around GetSpellCooldown is no protection when the COMPARISON of its
+-- result happens outside that pcall: the call succeeds and `info.duration > 1.5`
+-- raises, killing the whole tick. Because the glow is combat-only and secrets
+-- only appear in combat, the symptom was a cue that worked perfectly out of
+-- combat and never once glowed in it.
+reset()
+buttonSpell[macroButton] = DT_ID
+W.inCombat = true
+secretCooldown = true
+W.advance(0.3)
+check("secret cooldown does not kill the watcher", W.glowingChildrenOf(macroButton), 1)
+
+-- ...and every other frame in that tick still gets its right answer.  The buff
+-- is up here, so the Cooldown Manager's Putrefy icon glows -- one unreadable
+-- cooldown must not cost the decision the feature actually exists to make.
+check("secret cooldown does not cost the CDM icon its glow", W.glowingChildrenOf(cdmIcon), 1)
+check("...and it is not greyed instead", #W.dimTexturesOn(cdmIcon), 0)
+secretCooldown = false
 
 W.report("Putrefy rotational cue")

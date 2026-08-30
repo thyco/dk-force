@@ -24,6 +24,7 @@ EssentialCooldownViewer
 FindSpellOverrideByID
 GameTooltip
 GameTooltip_Hide
+GetActionCooldown
 GetActionInfo
 GetActionText
 GetCursorPosition
@@ -33,11 +34,13 @@ GetMacroInfo
 GetMacroSpell
 GetSpecialization
 GetSpecializationInfo
+GetSpellCooldown
 GetTime
 InCombatLockdown
 IsAddOnLoaded
 IsMounted
 IsPlayerSpell
+IsUsableAction
 LibStub
 Minimap
 PlaySound

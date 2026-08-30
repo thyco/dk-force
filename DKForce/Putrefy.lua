@@ -77,6 +77,83 @@ local function DiagScanBuffViewers()
     return frames, anyShown, oursInPool
 end
 
+-- Which cooldown API survives taint in combat?  GetSpellCooldown's duration is
+-- a SECRET value there -- confirmed in game -- and IsSpellUsable deliberately
+-- excludes cooldown, so neither answers "can I press this now" on its own.
+-- Rather than guess a third time, probe every candidate each tick with the read
+-- AND the comparison inside the pcall, and record which ones came back.  The
+-- game is the only authority on this.
+local probe = {}
+-- Counted separately in and out of combat, because only the in-combat numbers
+-- decide anything: out of combat nothing is secret, so every candidate passes
+-- there and a combined count would read as success for all six.
+local function Probe(label, fn)
+    local rec = probe[label]
+    if not rec then rec = { ok = 0, err = 0, okCombat = 0, errCombat = 0 }; probe[label] = rec end
+    local inCombat = InCombatLockdown()
+    local ok, value = pcall(fn)
+    if ok then
+        rec.ok = rec.ok + 1
+        rec.last = tostring(value)
+        if inCombat then
+            rec.okCombat = rec.okCombat + 1
+            rec.lastCombat = tostring(value)
+        end
+    else
+        rec.err = rec.err + 1
+        rec.error = tostring(value):gsub(".*%.lua:%d+: ", "")
+        if inCombat then rec.errCombat = rec.errCombat + 1 end
+    end
+end
+
+local function RunCooldownProbes()
+    local id = addon.SPELLS.DARK_TRANSFORMATION.id
+    Probe("C_Spell.GetSpellCooldown", function()
+        local info = C_Spell.GetSpellCooldown(id)
+        return info and info.duration and info.duration > 1.5 or false
+    end)
+    Probe("C_Spell.IsSpellUsable", function()
+        local u, p = C_Spell.IsSpellUsable(id)
+        return (u and "usable" or "no") .. "/" .. (p and "nopower" or "-")
+    end)
+    if GetSpellCooldown then
+        Probe("GetSpellCooldown(legacy)", function()
+            local start, dur = GetSpellCooldown(id)
+            return dur and dur > 1.5 or false
+        end)
+    end
+    if C_Spell.GetSpellCharges then
+        Probe("C_Spell.GetSpellCharges", function()
+            local c = C_Spell.GetSpellCharges(id)
+            return c and tostring(c.currentCharges) or "nil"
+        end)
+    end
+    -- Action-slot reads: the UI draws this sweep, so it may be readable where
+    -- the spell-level call is not.
+    local button = ((addon.trackedButtons or {}).putrefy or {})[1]
+    local slot = button and addon.GetButtonActionSlot and addon:GetButtonActionSlot(button)
+    if slot then
+        if GetActionCooldown then
+            Probe("GetActionCooldown(slot)", function()
+                local start, dur = GetActionCooldown(slot)
+                return dur and dur > 1.5 or false
+            end)
+        end
+        if IsUsableAction then
+            Probe("IsUsableAction(slot)", function()
+                local u, m = IsUsableAction(slot)
+                return (u and "usable" or "no") .. "/" .. (m and "nomana" or "-")
+            end)
+        end
+        if button.cooldown and button.cooldown.GetCooldownTimes then
+            Probe("button.cooldown times", function()
+                local start, dur = button.cooldown:GetCooldownTimes()
+                return dur and (dur / 1000) > 1.5 or false
+            end)
+        end
+    end
+end
+
 local function PutrefySettings()
     return DKForceDB and DKForceDB.putrefy
 end
@@ -106,16 +183,38 @@ end
 -- global cooldown and does not count.
 local function DarkTransformationReady()
     local spellID = addon.SPELLS.DARK_TRANSFORMATION.id
-    local usable, insufficientPower = true, false
-    if C_Spell and C_Spell.IsSpellUsable then
-        local ok, isUsable, noPower = pcall(C_Spell.IsSpellUsable, spellID)
-        if ok then usable, insufficientPower = isUsable, noPower end
-    end
-    if not (usable or insufficientPower) then return false end
-    if C_Spell and C_Spell.GetSpellCooldown then
-        local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
-        if ok and info and info.duration and info.duration > 1.5 then return false end
-    end
+    -- Every read AND every comparison inside ONE pcall.
+    --
+    -- In combat 12.1 hands tainted code SECRET values, and touching one raises.
+    -- A pcall around only the API call protects nothing: the call succeeds and
+    -- the comparison of its result is what throws --
+    -- "Attempt to compare field 'duration' (a secret number value, while
+    -- execution tainted by 'DKForce')".  That is exactly how this shipped: the
+    -- watcher died on its first combat tick and every tick after, and because
+    -- the glow is combat-only the cue simply never appeared, while the
+    -- desaturation kept working out of combat where nothing is secret.
+    --
+    -- IsSpellUsable is inside the same pcall for the same reason, not because
+    -- it is known to be secret: the protection has to cover the use, not the
+    -- call, and guessing which of the two APIs is restricted is how this class
+    -- of bug returns.
+    local ok, ready = pcall(function()
+        local usable, insufficientPower = true, false
+        if C_Spell and C_Spell.IsSpellUsable then
+            usable, insufficientPower = C_Spell.IsSpellUsable(spellID)
+        end
+        if not (usable or insufficientPower) then return false end
+        if C_Spell and C_Spell.GetSpellCooldown then
+            local info = C_Spell.GetSpellCooldown(spellID)
+            if info and info.duration and info.duration > 1.5 then return false end
+        end
+        return true
+    end)
+    -- Unreadable means unknown, and unknown counts as ready.  A false grey on
+    -- the button that IS the right press is worse than a false glow, and this
+    -- is the secondary half of the cue: the Putrefy step, which the feature
+    -- exists for, reads a frame's visibility and is unaffected by any of this.
+    if ok then return ready end
     return true
 end
 
@@ -183,6 +282,8 @@ local function ApplyPutrefyCues()
     -- been burned by in combat -- so a mid-combat error there would look
     -- exactly like the watcher never running.
     diag.entered = diag.entered + 1
+    -- Diagnosis must never be able to break the thing it measures.
+    pcall(RunCooldownProbes)
     if InCombatLockdown() then diag.lockdown = diag.lockdown + 1 end
     if UnitAffectingCombat and UnitAffectingCombat("player") then
         diag.affecting = diag.affecting + 1
@@ -317,6 +418,16 @@ function addon:PrintPutrefyDiagnostic()
     say(("  watcher: entered=%d lockdown=%d affecting=%d errors=%d")
         :format(diag.entered, diag.lockdown, diag.affecting, diag.errors))
     if diag.lastError then say("  lastError: " .. diag.lastError:sub(1, 150)) end
+    say("cooldown API probe (ok / errors):")
+    local names = {}
+    for k in pairs(probe) do names[#names + 1] = k end
+    table.sort(names)
+    for _, k in ipairs(names) do
+        local r = probe[k]
+        say(("  %-28s combat: ok=%-5d err=%-5d last=%-8s | out: ok=%-5d last=%s"):format(
+            k, r.okCombat, r.errCombat, tostring(r.lastCombat), r.ok, tostring(r.last)))
+        if r.error then say(("        ERR: %s"):format(r.error:sub(1, 90))) end
+    end
     say(("  buff row: scans=%d dtFramesInPool=%d anyShown=%d oursStillInPool=%d")
         :format(diag.dtScans or 0, diag.dtFrames or 0, diag.dtAnyShown or 0, diag.dtOurs or 0))
 
