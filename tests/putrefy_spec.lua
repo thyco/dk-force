@@ -520,4 +520,120 @@ check("...and not under the step that replaced it",
       dtShortAfter - dtShortBefore, 0)
 macroButton.cooldown:Hide()
 
+-- ---------------------------------------------------------------
+-- Putrefy's own cooldown, told by the cast rather than timed.
+--
+-- Putrefy is ON the global cooldown, so a swipe on its step could be either the
+-- GCD or its own cooldown, and no numeric read can settle it in combat.  Timing
+-- the swipe can, but only after a full GCD has passed -- which is a second and a
+-- half of the icon still saying "press me" after you just pressed it.
+--
+-- A cast event settles it outright.  Nothing here estimates a DURATION: the
+-- swipe still decides when the cooldown ends, so there is nothing to drift.
+-- ---------------------------------------------------------------
+
+-- 39. Casting Putrefy greys it on the next tick, without waiting out a grace.
+reset()
+dtBuffRow:Show()
+W.inCombat = true
+buttonSpell[macroButton] = PUTREFY_ID
+W.advance(0.2)
+check("before the cast: glowing", W.glowingChildrenOf(macroButton), 1)
+addon:OnPutrefyCast(PUTREFY_ID)
+macroButton.cooldown:Show(); cdmIcon.cooldown:Show()
+W.advance(0.2)                      -- well inside the grace
+check("cast: greyed at once", #W.dimTexturesOn(macroButton), 1)
+check("cast: no glow", W.glowingChildrenOf(macroButton), 0)
+
+-- 40. The swipe still decides when it ends -- no duration is tracked, so the
+--     dynamic cooldown reduction that made a duration unlearnable is moot.
+macroButton.cooldown:Hide(); cdmIcon.cooldown:Hide()
+W.advance(0.2)
+check("swipe cleared: glows again", W.glowingChildrenOf(macroButton), 1)
+
+-- 41. ...and the cast must not go on claiming a cooldown afterwards.  A stale
+--     flag would grey the button on the next unrelated global cooldown, which
+--     is the flicker the grace exists to prevent -- reintroduced by the very
+--     mechanism meant to shorten it.
+macroButton.cooldown:Show()
+W.advance(0.5)
+check("a later GCD does not grey it", W.glowingChildrenOf(macroButton), 1)
+check("a later GCD leaves it undimmed", #W.dimTexturesOn(macroButton), 0)
+macroButton.cooldown:Hide()
+
+-- 42. Another spell's cast says nothing about Putrefy.
+reset()
+dtBuffRow:Show()
+W.inCombat = true
+buttonSpell[macroButton] = PUTREFY_ID
+addon:OnPutrefyCast(DT_ID)
+macroButton.cooldown:Show()
+W.advance(0.5)
+check("another spell's cast does not grey Putrefy", W.glowingChildrenOf(macroButton), 1)
+macroButton.cooldown:Hide()
+
+-- 43. The grace remains the fallback for a cooldown whose start was never seen
+--     -- logging in mid-fight, or a missed event.  Without it the icon would
+--     glow through a cooldown it simply did not witness begin.
+reset()
+dtBuffRow:Show()
+W.inCombat = true
+buttonSpell[macroButton] = PUTREFY_ID
+macroButton.cooldown:Show()         -- already running, no cast seen
+W.advance(0.5)
+check("unseen cooldown: still glowing inside the grace", W.glowingChildrenOf(macroButton), 1)
+W.advance(1.5)
+check("unseen cooldown: greyed once the grace passes", #W.dimTexturesOn(macroButton), 1)
+macroButton.cooldown:Hide()
+
+-- 44. A Putrefy cast says nothing about the Dark Transformation step.  The two
+--     steps share one button, and the flag is about the spell, not the frame.
+reset()
+dtBuffRow:Hide()
+W.inCombat = true
+buttonSpell[macroButton] = PUTREFY_ID
+addon:OnPutrefyCast(PUTREFY_ID)
+cdmIcon.cooldown:Show()             -- Putrefy really is on cooldown...
+buttonSpell[macroButton] = DT_ID    -- ...and the sequence wraps to a ready DT
+W.advance(0.2)
+check("putrefy's cooldown greys its own icon", #W.dimTexturesOn(cdmIcon), 1)
+check("putrefy's cooldown does not grey the DT step", W.glowingChildrenOf(macroButton), 1)
+check("putrefy's cooldown leaves the DT step undimmed", #W.dimTexturesOn(macroButton), 0)
+cdmIcon.cooldown:Hide()
+
+-- 45. Only a Putrefy step's swipe speaks for Putrefy's cooldown.  Dark
+--     Transformation on cooldown while its buff is still up is an ordinary few
+--     seconds of every rotation: the macro sits on a greyed DT step drawing a
+--     real swipe, and the Cooldown Manager's Putrefy icon is the right press.
+--     Letting that swipe hold Putrefy's cast flag would grey the icon for as
+--     long as Dark Transformation stayed on cooldown -- the reported bug again,
+--     arriving by a new road.
+reset()
+dtBuffRow:Show()
+W.inCombat = true
+buttonSpell[macroButton] = PUTREFY_ID
+addon:OnPutrefyCast(PUTREFY_ID)
+cdmIcon.cooldown:Show()
+W.advance(0.2)
+check("putrefy cast: its own icon greyed", #W.dimTexturesOn(cdmIcon), 1)
+cdmIcon.cooldown:Hide()             -- Putrefy comes off cooldown...
+buttonSpell[macroButton] = DT_ID    -- ...while the macro sits on a DT step
+macroButton.cooldown:Show()         --    that is itself on cooldown
+W.advance(0.2)
+check("another step's swipe does not hold Putrefy on cooldown",
+      W.glowingChildrenOf(cdmIcon), 1)
+check("...and that step stays greyed on its own account",
+      #W.dimTexturesOn(macroButton), 1)
+
+--     The flag must be genuinely gone by now, not merely unused.  A hidden swipe
+--     answers "ready" on its own, so a flag left standing is invisible until the
+--     next global cooldown draws -- and then greys a button that was never cast.
+macroButton.cooldown:Hide()
+buttonSpell[macroButton] = PUTREFY_ID
+cdmIcon.cooldown:Show()             -- a plain GCD, with no Putrefy cast since
+W.advance(0.5)
+check("no cast flag left standing: a later GCD does not grey it",
+      W.glowingChildrenOf(cdmIcon), 1)
+cdmIcon.cooldown:Hide()
+
 W.report("Putrefy rotational cue")

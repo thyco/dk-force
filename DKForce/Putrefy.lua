@@ -103,6 +103,19 @@ local GCD_GRACE = 1.6
 -- Steps the global cooldown does not draw on, and which therefore need no grace.
 local OFF_GCD = { darkTransformation = true }
 local swipeSince = {}
+-- Set by Putrefy's own cast event, cleared the moment its swipe clears.
+--
+-- Timing a swipe answers "is this a real cooldown" only after a full global
+-- cooldown has passed, which is a second and a half of the icon still saying
+-- "press me" to someone who just pressed it.  A cast is proof where timing is
+-- only evidence, and it needs no duration: the swipe still decides when the
+-- cooldown ENDS, so there is nothing to estimate and nothing to drift.  This is
+-- not the Dark Transformation countdown coming back -- that one predicted a
+-- duration the button already knew exactly.
+--
+-- It is about the SPELL, not the frame: the Cooldown Manager row and every
+-- action-bar copy are all showing the same cooldown.
+local putrefyCastSeen = false
 local swipeSpell = {}
 
 local function CooldownSwipeShown(frame)
@@ -168,6 +181,7 @@ local function OnOwnCooldown(frame, nextCast)
     -- cooldown starts rather than a global cooldown later.  On such a step the
     -- first tick of a swipe is already proof, which is why the clock starting
     -- here no longer means "claim nothing yet".
+    if putrefyCastSeen and nextCast == "putrefy" then return true end
     return held >= (OFF_GCD[nextCast] and 0 or GCD_GRACE)
 end
 
@@ -192,6 +206,35 @@ end
 
 -- Readiness is usability alone.  Dark Transformation's COOLDOWN is answered per
 -- frame by the button's own swipe, exactly, and is no longer estimated here.
+
+-- Whether Putrefy is still on the cooldown its cast started, decided once per
+-- tick across every decorated frame at once.
+--
+-- Not per frame, and not by whichever the predicate happened to reach first: the
+-- Cooldown Manager row and an action-bar copy can disagree for a tick, and one
+-- may not be drawing a swipe at all.  Letting either clear the flag alone made
+-- the answer depend on table iteration order -- which is exactly the kind of
+-- thing that works on a dummy and not in a raid.
+--
+-- Cleared without waiting to have seen the swipe drawn, so a tick landing in the
+-- gap between the cast and Blizzard drawing it merely falls back to the grace,
+-- which is the old behaviour.  Holding the flag instead would grey the button on
+-- the next unrelated global cooldown -- the very flicker the grace prevents.
+local function RefreshPutrefyCastState()
+    if not putrefyCastSeen then return end
+    local anySwipe = false
+    local function look(frame)
+        if anySwipe or not frame then return end
+        if not (frame.IsVisible and frame:IsVisible()) then return end
+        if NextCastFor(frame) ~= "putrefy" then return end
+        if CooldownSwipeShown(frame) then anySwipe = true end
+    end
+    putrefyGlowGroup:ForEach(function(overlay) look(overlay._targetFrame) end)
+    if not anySwipe then
+        putrefyDimGroup:ForEach(function(record) look(record.frame) end)
+    end
+    if not anySwipe then putrefyCastSeen = false end
+end
 
 -- The combination this cue was reported broken for: a Dark Transformation step
 -- greyed while its own button draws no cooldown swipe.  The swipe being absent
@@ -268,7 +311,17 @@ function addon:RegisterCDMDarkTransformationBuffFrame(frame)
     darkTransformationBuffFrame = frame
 end
 
+-- Called from Core's cast dispatcher.  Only the cast matters, never a duration.
+function addon:OnPutrefyCast(spellID)
+    if not spellID then return end
+    spellID = addon:ResolveBaseSpellID(spellID) or spellID
+    if spellID ~= addon.SPELLS.PUTREFY.id then return end
+    putrefyCastSeen = true
+    diag.putrefyCasts = (diag.putrefyCasts or 0) + 1
+end
+
 function addon:StopPutrefyCues()
+    putrefyCastSeen = false
     putrefyCuesActive = false
     putrefyTestActive = false
     putrefyGlowGroup:Hide()
@@ -304,6 +357,7 @@ local function ApplyPutrefyCues()
     -- nil when no buff row is registered, false when one is registered and
     -- hidden.  The two mean different things.
     local dtBuffShown = darkTransformationBuffFrame and darkTransformationBuffFrame:IsShown()
+    RefreshPutrefyCastState()
     local dtReady     = DarkTransformationUsable()
     local inCombat    = InCombatLockdown()
 
@@ -435,8 +489,9 @@ function addon:PrintPutrefyDiagnostic()
     -- used to carry the previous step's elapsed time onto the new spell.
     -- dimWhileReady is a grey with no cooldown behind it at all; after the
     -- resync it should only ever be IsSpellUsable, and the snapshot says.
-    say(("  anomalies: staleSwipe=%d dimWhileReady=%d")
-        :format(diag.staleSwipe or 0, diag.dimWhileReady or 0))
+    say(("  anomalies: staleSwipe=%d dimWhileReady=%d putrefyCasts=%d castHeld=%s")
+        :format(diag.staleSwipe or 0, diag.dimWhileReady or 0,
+                diag.putrefyCasts or 0, tostring(putrefyCastSeen)))
     local episodes = {}
     for key, by in pairs(diag.swipeBy) do
         episodes[#episodes + 1] = ("%s=%d/%d(max %.1fs)")
