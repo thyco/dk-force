@@ -21,9 +21,12 @@ Built for personal use. Not distributed, and not tracking upstream.
   Epidemic then each have their own style, colour and appearance page.
 - **Blightfall & Soul Reaper prompt** — a movable icon showing the next spell in
   the chain with a countdown and a ready glow.
-  Dark Transformation starts the Soul Reaper countdown; casting Soul Reaper
-  starts the Blightfall one. It runs only while **Blightfall is talented** — it
-  is gated on the talent itself, not on a hero specialisation.
+  Dark Transformation anchors both countdowns; casting Soul Reaper swaps to the
+  Blightfall icon, which then stays until Blightfall is cast. Each step is gated
+  on its own talent, not on a hero specialisation, so a build without
+  **Blightfall** — Rider of the Apocalypse, say — still gets the Soul Reaper
+  prompt. That one is only a cue for the window, so it clears on the cast or
+  when you leave combat.
 
 ### Blood
 

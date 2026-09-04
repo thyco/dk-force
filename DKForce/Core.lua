@@ -231,7 +231,7 @@ castFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
 
 castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
     if event == "PLAYER_TALENT_UPDATE" then
-        if not addon:IsBlightfallTalented() then addon:StopBlightfallTest() end
+        if not addon:IsBlightfallChainTalented() then addon:StopBlightfallTest() end
         -- TRAIT_CONFIG_UPDATED already covers the live path; this keeps the
         -- two talent events symmetrical.
         addon:RefreshBlightfallTracker()
@@ -256,6 +256,7 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         -- timer, even though that buff continues ticking out of combat.
         addon:StopSuddenDoomGlows()
         addon:OnFesteringCombatEnd()
+        addon:OnBlightfallChainCombatEnd()
     elseif event == "PLAYER_REGEN_DISABLED" then
         addon:OnFesteringCombatStart()
     end

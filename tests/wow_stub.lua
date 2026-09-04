@@ -65,6 +65,41 @@ function frameMeta:GetScript(which) return self._scripts[which] end
 function frameMeta:RegisterEvent() end
 function frameMeta:UnregisterEvent() end
 
+-- The Blightfall prompt is a standalone screen frame rather than an overlay on
+-- someone else's button, so it is the one display that sizes, anchors, drags
+-- and labels itself.  Only what a spec reads back is recorded; the rest are
+-- no-ops so the real CreateBlightfallIconFrame runs unedited.
+function frameMeta:SetShown(shown) self._shown = shown and true or false end
+function frameMeta:SetSize(w, h) self._width, self._height = w, h end
+function frameMeta:GetSize() return self._width, self._height end
+function frameMeta:GetWidth() return self._width end
+function frameMeta:GetHeight() return self._height end
+function frameMeta:ClearAllPoints() end
+function frameMeta:GetPoint() return "CENTER", self._parent, "CENTER", 0, 0 end
+function frameMeta:SetBackdrop(backdrop) self._backdrop = backdrop end
+function frameMeta:SetBackdropBorderColor(...) self._borderColor = { ... } end
+function frameMeta:SetClampedToScreen() end
+function frameMeta:SetMovable(movable) self._movable = movable end
+function frameMeta:RegisterForDrag() end
+function frameMeta:EnableMouse(enabled) self._mouseEnabled = enabled end
+function frameMeta:StartMoving() end
+function frameMeta:StopMovingOrSizing() end
+
+local fontStringMeta = {}
+fontStringMeta.__index = fontStringMeta
+function fontStringMeta:SetText(text) self._text = text end
+function fontStringMeta:GetText() return self._text or "" end
+function fontStringMeta:SetPoint() end
+function fontStringMeta:SetFont(file, size, flags) self._font = { file, size, flags } end
+function fontStringMeta:SetTextColor() end
+function fontStringMeta:SetShadowColor() end
+function fontStringMeta:SetShadowOffset() end
+function fontStringMeta:GetObjectType() return "FontString" end
+
+function frameMeta:CreateFontString()
+    return setmetatable({ _parent = self }, fontStringMeta)
+end
+
 -- Textures.  The desaturation draws a copy of the button's icon as a texture ON
 -- the button rather than as a child frame, so a spec that cannot see textures
 -- cannot see that feature at all.
@@ -166,6 +201,18 @@ function W.shownChildrenOf(...)
     return n
 end
 
+-- Every frame the addon created under the given parent, shown or not.  The
+-- Blightfall prompt is a single screen-anchored frame rather than a set of
+-- button overlays, so a spec reaches its icon and its countdown text through
+-- this instead of through a button it handed the addon.
+function W.createdChildrenOf(parent)
+    local found = {}
+    for _, frame in ipairs(createdFrames) do
+        if frame._parent == parent then found[#found + 1] = frame end
+    end
+    return found
+end
+
 -- ---------------------------------------------------------------
 -- Glow recording.  The specs assert through the real Glow.lua code path, so
 -- what is faked is LibCustomGlow itself, not addon:GetGlowTypeByID.
@@ -259,6 +306,13 @@ function CreateFrame(_, _, parent)
     return frame
 end
 function InCombatLockdown() return W.inCombat end
+
+-- Blizzard's own root frame.  A screen-anchored display parents to it and reads
+-- its frame level, so it has to be a real stub frame rather than a bare table.
+UIParent = newFrame(nil)
+UIParent._level = 0
+STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+
 function wipe(t) for k in pairs(t) do t[k] = nil end return t end
 
 C_Timer = {

@@ -684,9 +684,10 @@ function addon:CreateConfigPanel(standalone)
         -- Kept short and raised so it still fits the shorter canvas Blizzard's
         -- AddOns settings page gives this panel.
         page.hint = CreateText(page.settingsCard,
-            "Unholy, Blightfall talented.  Dark Transformation starts both countdowns.  "
-            .. "Set a delay to 0 to hide that icon.  The glow only shows in combat; the "
-            .. "icon stays until Blightfall is cast.  Unlock to drag the icon.",
+            "Unholy.  Dark Transformation starts both countdowns.  Set a delay to 0 to "
+            .. "hide that icon.  The glow only shows in combat; the icon stays until the "
+            .. "spell is cast.  Without the Blightfall talent only Soul Reaper is "
+            .. "prompted, and it also clears when you leave combat.  Unlock to drag it.",
             14, -336, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
 
         page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)

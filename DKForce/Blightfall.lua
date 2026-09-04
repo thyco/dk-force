@@ -25,6 +25,15 @@ function addon:IsSoulReaperTalented()
     return IsPlayerSpell and IsPlayerSpell(SOUL_REAPER_TALENT_ID) or false
 end
 
+-- Whether the chain has anything to say at all.  The Blightfall talent used to
+-- be the single gate, which meant a Rider of the Apocalypse build got no Soul
+-- Reaper prompt even though it has Soul Reaper and Dark Transformation just the
+-- same.  Either talent is now enough; which icons actually appear is decided
+-- per step in ResolveBlightfallStep.
+function addon:IsBlightfallChainTalented()
+    return self:IsBlightfallTalented() or self:IsSoulReaperTalented()
+end
+
 -- -------------------------------------------------------
 -- Unholy chain prompt: Soul Reaper -> Blightfall
 -- -------------------------------------------------------
@@ -39,6 +48,11 @@ end
 -- and cannot be recast until Blightfall is, so a pending prompt is genuinely
 -- still owed after the fight ends -- and Blizzard shows no timer for it.  Only a
 -- Blightfall cast clears the chain; combat gates the glow, not the icon.
+--
+-- Without the Blightfall talent -- Rider of the Apocalypse, say -- the chain is
+-- the Soul Reaper step alone.  That prompt is a rotational cue rather than a
+-- locked-out button, so it does expire: casting Soul Reaper clears it, and so
+-- does leaving combat, since holding it through to the next pull is just noise.
 --
 -- How long the preview holds on the final step before replaying the timeline.
 local BLIGHTFALL_TEST_HOLD = 2
@@ -74,15 +88,21 @@ end
 local function ResolveBlightfallStep()
     if not blightState then return nil end
     local soulReaperAfter, blightfallAfter = BlightfallDelays()
+    -- A build without the Blightfall talent has no second step: nothing hands
+    -- over, and reaching the Blightfall step at all means there is no icon.
+    -- The preview keeps both steps so either icon can still be styled.
+    local hasBlightfall = blightTest or addon:IsBlightfallTalented()
     if blightState.step == "SOUL_REAPER" then
         local elapsed = GetTime() - blightState.dtAt
         -- Either the step was switched off under it, or Soul Reaper was never
         -- cast and Blightfall has come due anyway.  Both hand over, which drops
         -- the Soul Reaper icon in the same frame.
-        if soulReaperAfter <= 0 or (blightfallAfter > 0 and elapsed >= blightfallAfter) then
+        if soulReaperAfter <= 0
+            or (hasBlightfall and blightfallAfter > 0 and elapsed >= blightfallAfter) then
             blightState.step = "BLIGHTFALL"
         end
     end
+    if blightState.step == "BLIGHTFALL" and not hasBlightfall then return nil end
     local deadline = blightState.step == "SOUL_REAPER" and soulReaperAfter or blightfallAfter
     if deadline <= 0 then return nil end
     return deadline
@@ -200,7 +220,7 @@ local function ApplyBlightfallSettings()
     -- Upstream also accepted the timeline as a reason to keep running.  The
     -- icon is the only display here, so `enabled` alone is the master switch.
     if (not s.enabled and not blightTest)
-        or (not blightTest and not addon:IsBlightfallTalented()) then
+        or (not blightTest and not addon:IsBlightfallChainTalented()) then
         StopBlightfallReadyGlow(iconFrame)
         iconFrame:Hide(); blightState = nil
         return
@@ -219,7 +239,7 @@ end
 function addon:OnBlightfallChainSpellCast(spellID)
     local s = BlightfallSettings()
     if not s or not s.enabled or not addon:IsUnholySpec()
-        or not addon:IsBlightfallTalented() then return end
+        or not addon:IsBlightfallChainTalented() then return end
     -- Only the three chain spells are relevant; an unrelated cast must leave a
     -- running preview alone.
     if spellID ~= addon.SPELLS.DARK_TRANSFORMATION.id
@@ -241,7 +261,9 @@ function addon:OnBlightfallChainSpellCast(spellID)
     elseif spellID == addon.SPELLS.SOUL_REAPER.id then
         -- Casting Soul Reaper only swaps which icon is on screen: Blightfall's
         -- deadline is anchored to Dark Transformation, so the countdown carries
-        -- straight on rather than restarting from this cast.
+        -- straight on rather than restarting from this cast.  With no Blightfall
+        -- talent there is nothing to swap to, and ResolveBlightfallStep reads
+        -- this same step as "no icon" -- so the one branch ends both chains.
         if blightState and blightState.step == "SOUL_REAPER" then
             blightState.step = "BLIGHTFALL"
         else
@@ -259,6 +281,21 @@ function addon:OnBlightfallChainSpellCast(spellID)
 end
 
 function addon:RefreshBlightfallTracker() ApplyBlightfallSettings() end
+
+-- PLAYER_REGEN_ENABLED.  A Blightfall chain deliberately survives the end of a
+-- fight, because the button really is still locked out; a Soul Reaper prompt on
+-- a build without Blightfall is only a cue for that Dark Transformation window,
+-- and that window is over.  The preview is left alone -- it is normally run out
+-- of combat, so it would never survive its own first frame otherwise.
+function addon:OnBlightfallChainCombatEnd()
+    if blightTest or not blightState then return end
+    if addon:IsBlightfallTalented() then return end
+    blightState = nil
+    if blightIconFrame then
+        StopBlightfallReadyGlow(blightIconFrame)
+        blightIconFrame:Hide()
+    end
+end
 
 function addon:TestBlightfallTracker()
     local s = BlightfallSettings()
@@ -315,7 +352,7 @@ function addon:PrintBlightfallDiagnostic()
     say("GetActiveSpecID(): " .. (okSpec and tostring(specID) or "error"))
     local okUnholy, unholy = pcall(addon.IsUnholySpec, addon)
     say("IsUnholySpec(): " .. (okUnholy and yn(unholy) or "error"))
-    say("IsPlayerSpell(1271974) Blightfall TALENT (the gate): "
+    say("IsPlayerSpell(1271974) Blightfall TALENT (gates the Blightfall step): "
         .. spellKnown(BLIGHTFALL_TALENT_ID))
     say("IsPlayerSpell(1271967) Blightfall CAST id (expected false): "
         .. spellKnown(addon.SPELLS.BLIGHTFALL.id))
@@ -333,6 +370,9 @@ function addon:PrintBlightfallDiagnostic()
     local okTalent, srTalented = pcall(addon.IsSoulReaperTalented, addon)
     say("IsSoulReaperTalented() (gates the Soul Reaper step): "
         .. (okTalent and yn(srTalented) or "error"))
+    local okChain, chainTalented = pcall(addon.IsBlightfallChainTalented, addon)
+    say("IsBlightfallChainTalented() (either one; gates the whole prompt): "
+        .. (okChain and yn(chainTalented) or "error"))
     if db then
         say(string.format("delays after Dark Transformation: Soul Reaper = %s, Blightfall = %s (0 = icon off)",
             tostring(db.soulReaperAfterDT), tostring(db.blightfallAfterDT)))
