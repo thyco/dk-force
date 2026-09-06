@@ -360,7 +360,9 @@ check("test: and the watcher takes it straight back", OurGlow(barButton), 0)
 -- 8. A client whose highlight is not the one those events describe.
 -- ---------------------------------------------------------------
 -- Nothing ever reports the glow as wanted, so the takeover draws nothing and
--- what is left is the subtractive feature -- which must still work.
+-- what is left is the subtractive feature -- which must still work.  Not the
+-- path a 12.1 client takes; this is the half that depends on the client, so it
+-- is the half worth holding still.
 reset()
 addon:OnSoulReaperCast(SOUL_REAPER_ID)
 OnCooldown(barButton, true)

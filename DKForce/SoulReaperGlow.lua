@@ -16,6 +16,12 @@ local addonName, addon = ...
 -- are the game saying so itself, for this exact spell id, so the whole rule this
 -- file adds is: what Blizzard wants, minus the cooldown.
 --
+-- Verified in game on 12.1: the events do fire for 343294, one of the fields
+-- below carries the highlight, and the takeover is the path that actually runs.
+-- The fallback in the next paragraph has never been the live behaviour here --
+-- it is insurance against a client where the glow is something else, not a
+-- description of this one.  `/dkf soul` prints which of the two you are on.
+--
 -- If those events never fire -- the highlight on the icon turns out to be
 -- something else, the assisted-rotation one say -- then nothing is ever known to
 -- be wanted, this file draws nothing, and what is left is the plain subtractive
