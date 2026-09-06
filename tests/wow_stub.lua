@@ -54,6 +54,10 @@ function frameMeta:GetFrameLevel() return self._level end
 function frameMeta:SetPoint() end
 function frameMeta:SetAllPoints() end
 function frameMeta:SetAlpha(a) self._alpha = a end
+-- Frame alpha reads back, unlike most of what is stubbed here: the Soul Reaper
+-- glow suppression records what it found before it zeroes it, so a stub that
+-- always answered 1 would hide the bug where it restores the wrong value.
+function frameMeta:GetAlpha() return self._alpha or 1 end
 function frameMeta:GetObjectType() return self._objectType end
 function frameMeta:SetScript(which, fn)
     self._scripts[which] = fn

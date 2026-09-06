@@ -24,6 +24,7 @@ Putrefy.lua
 SuddenDoom.lua
 BloodDnD.lua
 Blightfall.lua
+SoulReaperGlow.lua
 ButtonScanner.lua
 Config.lua
 MinimapButton.lua

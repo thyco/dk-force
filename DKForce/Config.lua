@@ -9,6 +9,7 @@ local PAGE_ITEMS = {
     { text = "Sudden Doom",              value = "suddendoom" },
     { text = "Putrefy",                  value = "putrefy" },
     { text = "Blightfall & Soul Reaper", value = "blightfall" },
+    { text = "Soul Reaper Glow",        value = "soulreaper" },
     { text = "Stand In Death and Decay", value = "blooddndmissing" },
 }
 
@@ -415,6 +416,9 @@ function addon:CreateConfigPanel(standalone)
         if selectedKey == "putrefy" and addon.RefreshPutrefyCues then
             addon:StopPutrefyCues(); addon:RefreshPutrefyCues()
         end
+        if selectedKey == "soulreaper" and addon.RefreshSoulReaperGlow then
+            addon:RefreshSoulReaperGlow()
+        end
     end
 
     local function RefreshPreview(page)
@@ -704,11 +708,49 @@ function addon:CreateConfigPanel(standalone)
         pages.blightfall = page
     end
 
+    -- One switch and an explanation.  There is no preview and no colour card
+    -- because the feature draws nothing: it only takes Blizzard's own highlight
+    -- off an icon that cannot be pressed yet.
+    local function BuildSoulReaperPage()
+        local page = CreateFrame("Frame", nil, pageHolder)
+        page:SetAllPoints(); page.layoutKind = "soulreaper"
+        page.settingsCard = CreateCard(page, "Soul Reaper Glow")
+        AddSelector(page, page.settingsCard)
+        local function settings() return DKForceDB.soulReaperGlow end
+        page.enable = CreateCheck(page.settingsCard,
+            "Hide the glow while Soul Reaper is on cooldown", 14, -76,
+            function() return settings().enabled end,
+            function(v)
+                settings().enabled = v
+                if addon.RefreshSoulReaperGlow then addon:RefreshSoulReaperGlow() end
+            end)
+        page.hint = CreateText(page.settingsCard,
+            "The game glows Soul Reaper when it wants you to press it -- on a target "
+            .. "in execute range, and while Dark Transformation is up -- and keeps "
+            .. "glowing through the cooldown that follows, on the action bar and on "
+            .. "the Cooldown Manager alike.  This hides that glow until the spell is "
+            .. "actually ready again, and hides nothing else.\n\n"
+            .. "Track Soul Reaper on the Cooldown Manager if you can: its row shows "
+            .. "the spell's own cooldown and never the global one, which is the only "
+            .. "exact reading of when the glow should come back.  Without it the "
+            .. "cooldown is read from the action bar, where a press of any other "
+            .. "spell looks the same for a moment.\n\n"
+            .. "/dkf soul reports what it found on your icons.",
+            14, -108, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
+
+        page.refresh = function()
+            page.selector.refresh()
+            page.enable.refresh()
+        end
+        pages.soulreaper = page
+    end
+
     BuildGlowPage("festering", "Festering Scythe Warning", addon.SPELLS.FESTERING_STRIKE.id)
     BuildSuddenDoomPage()
     BuildPutrefyPage()
     BuildGlowPage("blooddndmissing", "Blood - Stand In Death and Decay", addon.SPELLS.DEATH_AND_DECAY.id)
     BuildBlightfallPage()
+    BuildSoulReaperPage()
 
     local function LayoutPages()
         local width = pageHolder:GetWidth()
@@ -765,6 +807,12 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, -(previewHeight + gap))
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.hint:SetWidth(math.max(230, leftWidth - 32))
+            elseif page.layoutKind == "soulreaper" then
+                -- One card, the whole page: a checkbox and the explanation of
+                -- what it does are all there is to lay out.
+                page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+                page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                page.hint:SetWidth(math.max(230, width - 32))
             elseif page.layoutKind == "glow" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -790,7 +838,9 @@ function addon:CreateConfigPanel(standalone)
         -- a no-op when no test is running.
         addon:StopBlightfallTest()
         rescanButton:Show()
-        testButton:Show()
+        -- Nothing to preview: the Soul Reaper page's feature only ever removes
+        -- artwork the game drew, so a Test would have nothing to show.
+        testButton:SetShown(selectedKey ~= "soulreaper")
         activePage.refresh()
     end
 

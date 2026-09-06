@@ -43,10 +43,12 @@ addon.SPELLS = {
         name = "Death's Caress",
         key  = nil,
     },
+    -- Keyed so ButtonScanner tracks its buttons: SoulReaperGlow needs the
+    -- action-bar copies to take Blizzard's highlight off them.
     SOUL_REAPER = {
         id   = 343294,
         name = "Soul Reaper",
-        key  = nil,
+        key  = "soulReaper",
     },
     -- Only the base id is listed.  Clawing Shadows and San'layn's Vampiric
     -- Strike are talent OVERRIDES of Scourge Strike, so ButtonScanner resolves
@@ -139,6 +141,13 @@ addon.DEFAULT_DB = {
         nativeColor = true,
         color       = { r = 0.00, g = 0.90, b = 0.20 },
     },
+    -- Take Blizzard's own Soul Reaper highlight off the icon while the spell is
+    -- on cooldown.  On by default, unlike every other feature added after the
+    -- first release: this one only ever removes something the client is already
+    -- getting wrong, so there is nothing to opt into.
+    soulReaperGlow = {
+        enabled = true,
+    },
     -- Unholy chain prompt.  The movable icon is the only display DK Force
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
     -- so `enabled` is the single switch for the whole feature.
@@ -221,6 +230,9 @@ function addon:StopAll()
     addon:StopDnDMissingGlow()
     addon:StopScourgeDim()
     addon:StopPutrefyCues()
+    -- Subtractive rather than additive: stopping it means handing Blizzard's
+    -- own highlight back, not taking one of ours away.
+    addon:RestoreSoulReaperGlow()
 end
 
 local castFrame = CreateFrame("Frame")
@@ -251,6 +263,7 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         end
         addon:OnBlightfallChainSpellCast(spellID)
         addon:OnPutrefyCast(spellID)
+        addon:OnSoulReaperCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
@@ -451,6 +464,8 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:PrintCDMDump()
     elseif cmd == "putrefy" then
         addon:PrintPutrefyDiagnostic()
+    elseif cmd == "soul" then
+        addon:PrintSoulReaperDiagnostic()
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false
@@ -469,6 +484,7 @@ SlashCmdList["DKFORCE"] = function(msg)
             print("|cffcc0000DK Force:|r /dkf debug - Toggle debug logging")
             print("|cffcc0000DK Force:|r /dkf blight - Blightfall prompt diagnostic")
             print("|cffcc0000DK Force:|r /dkf putrefy - Putrefy cue diagnostic")
+            print("|cffcc0000DK Force:|r /dkf soul - Soul Reaper glow diagnostic")
             print("|cffcc0000DK Force:|r /dkf minimap - Show Minimap button")
         end
     end

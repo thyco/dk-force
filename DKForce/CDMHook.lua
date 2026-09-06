@@ -29,6 +29,9 @@ local PUTREFY_SPELL_ID = 1247378
 -- `BuffIcon cooldownID=1233448 shown=false Dark Transformation`, shown=true
 -- while the buff is up.
 local DARK_TRANSFORMATION_SPELL_ID = 1233448
+-- Soul Reaper's row is the exact cooldown signal the glow suppression wants:
+-- the Cooldown Manager draws the spell's own cooldown and never the global one.
+local SOUL_REAPER_SPELL_ID = 343294
 local hooked = false
 
 local function GetCDMSpellID(item)
@@ -86,6 +89,7 @@ local function AnyFeatureWantsCDM()
     return addon:IsFesteringEnabled() or addon:IsSuddenDoomEnabled()
         or LesserGhoulEnabled() or addon:IsDnDMissingEnabled()
         or addon:IsScourgeDimEnabled() or addon:IsPutrefyEnabled()
+        or addon:IsSoulReaperGlowEnabled()
 end
 
 -- One classifier and one dispatcher for both discovery paths.
@@ -112,6 +116,8 @@ local function Classify(spellID, itemSpellID, item)
         return "scourge"
     elseif addon:IsPutrefyEnabled() and spellID == PUTREFY_SPELL_ID then
         return "putrefy"
+    elseif addon:IsSoulReaperGlowEnabled() and spellID == SOUL_REAPER_SPELL_ID then
+        return "soulReaper"
     elseif addon:IsPutrefyEnabled()
         and (spellID == DARK_TRANSFORMATION_SPELL_ID
              or itemSpellID == DARK_TRANSFORMATION_SPELL_ID)
@@ -138,6 +144,7 @@ local DISPATCH = {
     bloodDndAbility = function(item) addon:RegisterCDMDnDMissingFrame(item) end,
     bloodDndBuff    = function(item) addon:RegisterCDMDnDBuffFrame(item) end,
     putrefy = function(item) addon:RegisterCDMPutrefyFrame(item) end,
+    soulReaper = function(item) addon:RegisterCDMSoulReaperFrame(item) end,
     darkTransformationBuff = function(item) addon:RegisterCDMDarkTransformationBuffFrame(item) end,
 }
 

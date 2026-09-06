@@ -27,6 +27,14 @@ Built for personal use. Not distributed, and not tracking upstream.
   **Blightfall** — Rider of the Apocalypse, say — still gets the Soul Reaper
   prompt. That one is only a cue for the window, so it clears on the cast or
   when you leave combat.
+- **Soul Reaper glow** — the game glows Soul Reaper when it wants you to press
+  it, on a target in execute range and while Dark Transformation is up, and
+  keeps glowing through the cooldown that follows. This hides that glow until
+  the spell is ready again, on the action bar and the Cooldown Manager alike,
+  and hides nothing else. It draws nothing of its own. Track Soul Reaper on the
+  Cooldown Manager if you can: that row shows the spell's own cooldown and never
+  the global one, which is the only exact reading of when the glow should come
+  back. On by default; `/dkf soul` reports what it found on your icons.
 
 ### Blood
 
@@ -58,7 +66,7 @@ offered for the selected spec:
 
 | Spec | Pages |
 | --- | --- |
-| Unholy | Festering Scythe, Sudden Doom, Death Coil (Sudden Doom), Epidemic (Sudden Doom), Blightfall & Soul Reaper |
+| Unholy | Festering Scythe, Sudden Doom, Putrefy, Blightfall & Soul Reaper, Soul Reaper Glow |
 | Blood | Stand In Death and Decay |
 
 A **Spec** dropdown picks which set is offered — *Auto* follows your current
@@ -78,6 +86,7 @@ Slash commands:
 | `/dkf cdmscan` | Rescan Cooldown Manager tracked items |
 | `/dkf debug` | Toggle debug logging |
 | `/dkf blight` | Print the Blightfall prompt diagnostic |
+| `/dkf soul` | Print the Soul Reaper glow diagnostic |
 | `/dkf minimap` | Show the minimap button again |
 
 ## Installation

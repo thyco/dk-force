@@ -1,0 +1,276 @@
+-- Behavioural test for the Soul Reaper glow suppression.
+--
+-- Repo infrastructure, not addon code -- outside DKForce/ so verify.sh check 3
+-- never sees it and WoW can never load it.
+--
+-- The feature is subtractive: it takes the alpha off Blizzard's own highlight
+-- while Soul Reaper is on cooldown and puts it back afterwards.  Two things
+-- about that are worth pinning down, and neither is visible by reading the code
+-- next to a running client:
+--
+--   Which cooldown it believes.  A Cooldown Manager row draws the spell's own
+--   cooldown and never the global one, so wherever a row exists it is the only
+--   source consulted -- including when it says "ready" and an action-bar button
+--   beside it is mid-global-cooldown.  Without a row the bar is all there is,
+--   and our own cast is what makes its swipe mean anything.
+--
+--   That nothing is ever left invisible.  Every path that stops suppressing has
+--   to hand the alpha back, including for an icon that has since left the bars.
+--   A stranded highlight is a button that never glows again until a reload, and
+--   it would look exactly like the feature working.
+local W = dofile("tests/wow_stub.lua")
+local check = W.check
+
+local SOURCE = os.getenv("DKFORCE_SOUL_REAPER_SOURCE") or "DKForce/SoulReaperGlow.lua"
+
+local SOUL_REAPER_ID, DEATH_COIL_ID = 343294, 47541
+
+addon = {}
+addon.SPELLS = {
+    SOUL_REAPER = { id = SOUL_REAPER_ID, name = "Soul Reaper", key = "soulReaper" },
+}
+addon.trackedButtons = { soulReaper = {} }
+-- Only the diagnostic asks, and it must not error when Blightfall.lua is not
+-- loaded beside this.
+addon.IsSoulReaperTalented = function() return true end
+
+DKForceDB = { soulReaperGlow = { enabled = true } }
+local settings = DKForceDB.soulReaperGlow
+
+W.load(SOURCE, addon)
+
+-- ---------------------------------------------------------------
+-- Icons.  An action-bar button and a Cooldown Manager row differ here only in
+-- how they reach the addon, so one builder covers both.
+-- ---------------------------------------------------------------
+local function NewIcon(highlightField, shape)
+    local icon = W.newFrame(nil, "Button")
+    icon.cooldown = W.newFrame(icon)
+    icon.cooldown:Hide()
+    local highlight = W.newFrame(icon)
+    if shape then highlight[shape] = {} end
+    icon[highlightField or "SpellActivationAlert"] = highlight
+    icon.highlight = highlight
+    return icon
+end
+
+-- Blizzard has decided to glow this icon.  Stated rather than left to the stub's
+-- default, because "is the highlight on screen" is a condition the addon reads.
+local function Glowing(icon) icon.highlight:Show() end
+local function OnCooldown(icon, on) if on then icon.cooldown:Show() else icon.cooldown:Hide() end end
+local function Alpha(icon) return icon.highlight:GetAlpha() end
+
+local barButton, cdmRow
+-- Rows are never unregistered -- CDMHook has no such path -- so every row a
+-- case hands over stays in the addon's table for the rest of the run, and the
+-- only way to take one out of play is to take it off the screen.
+local givenRows = {}
+
+local function reset(opts)
+    opts = opts or {}
+    -- Hand back anything still held before the icons holding it go out of scope.
+    addon:RestoreSoulReaperGlow()
+    settings.enabled = true
+    for _, row in ipairs(givenRows) do row:Hide() end
+    barButton = NewIcon(opts.field, opts.shape)
+    Glowing(barButton)
+    addon.trackedButtons.soulReaper = { barButton }
+    -- A tick with nothing on cooldown and no row on screen is what makes the
+    -- addon forget a remembered cast; it exposes no other way, which is itself
+    -- the behaviour case 2 turns on.  It has to happen before a fresh row is
+    -- registered, because a visible row short-circuits that path.
+    addon:UpdateSoulReaperGlow()
+    cdmRow = nil
+    if opts.cdm then
+        cdmRow = NewIcon()
+        Glowing(cdmRow)
+        addon:RegisterCDMSoulReaperFrame(cdmRow)
+        givenRows[#givenRows + 1] = cdmRow
+    end
+end
+
+-- ---------------------------------------------------------------
+-- 1. The Cooldown Manager row is exact, and it is believed alone.
+-- ---------------------------------------------------------------
+reset({ cdm = true })
+addon:UpdateSoulReaperGlow()
+check("row ready: bar highlight untouched", Alpha(barButton), 1)
+check("row ready: row highlight untouched", Alpha(cdmRow), 1)
+
+OnCooldown(cdmRow, true)
+addon:UpdateSoulReaperGlow()
+check("row on cooldown: bar highlight suppressed", Alpha(barButton), 0)
+check("row on cooldown: row highlight suppressed", Alpha(cdmRow), 0)
+
+OnCooldown(cdmRow, false)
+addon:UpdateSoulReaperGlow()
+check("row ready again: bar highlight restored", Alpha(barButton), 1)
+check("row ready again: row highlight restored", Alpha(cdmRow), 1)
+
+-- The whole reason the row wins: the bar draws the global cooldown too, and a
+-- global cooldown is not a reason to stop telling the player to press this.
+-- The cast is armed deliberately -- without it the bar would be ignored for the
+-- unrelated reason that nothing has been cast, and this would pass either way.
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("row ready, bar mid-global-cooldown: still glowing", Alpha(barButton), 1)
+
+-- ---------------------------------------------------------------
+-- 2. Without a row, a swipe means nothing until we have seen the cast.
+-- ---------------------------------------------------------------
+reset()
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("bar swipe, no cast seen: untouched", Alpha(barButton), 1)
+
+-- Pressing something else is not Soul Reaper's cooldown starting, even though
+-- the swipe it draws on this button looks identical.
+addon:OnSoulReaperCast(DEATH_COIL_ID)
+addon:UpdateSoulReaperGlow()
+check("bar swipe after an unrelated cast: untouched", Alpha(barButton), 1)
+
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+addon:UpdateSoulReaperGlow()
+check("bar swipe after our own cast: suppressed", Alpha(barButton), 0)
+
+OnCooldown(barButton, false)
+addon:UpdateSoulReaperGlow()
+check("bar swipe cleared: restored", Alpha(barButton), 1)
+
+-- The flag went with the swipe, so the next unrelated global cooldown is not
+-- read as Soul Reaper's.
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("later swipe with no new cast: untouched", Alpha(barButton), 1)
+
+-- ---------------------------------------------------------------
+-- 3. Nothing is ever left invisible.
+-- ---------------------------------------------------------------
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("suppressed before the button leaves the bars", Alpha(barButton), 0)
+
+-- A rescan that no longer finds the button: it is off the tracked list while
+-- its highlight is still at zero.
+local stranded = barButton
+addon.trackedButtons.soulReaper = {}
+OnCooldown(stranded, false)
+addon:UpdateSoulReaperGlow()
+check("an untracked icon is still restored", Alpha(stranded), 1)
+
+-- The settings switch has to hand back whatever is held at the moment it moves.
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("held while enabled", Alpha(barButton), 0)
+settings.enabled = false
+addon:RefreshSoulReaperGlow()
+check("switching the feature off restores", Alpha(barButton), 1)
+
+addon:UpdateSoulReaperGlow()
+check("and it suppresses nothing while off", Alpha(barButton), 1)
+
+-- StopAll, the path a Test and a spec change both take.
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+addon:RestoreSoulReaperGlow()
+check("RestoreSoulReaperGlow hands the alpha back", Alpha(barButton), 1)
+
+-- ---------------------------------------------------------------
+-- 4. What counts as a highlight.
+-- ---------------------------------------------------------------
+-- A highlight that is not on screen is not something to suppress -- taking the
+-- alpha off it would record a suppression that has nothing to restore.
+reset()
+barButton.highlight:Hide()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("a hidden highlight is left alone", Alpha(barButton), 1)
+
+-- A glow already at zero: restoring it to the zero we found would be
+-- indistinguishable from never giving it back.
+reset()
+barButton.highlight:SetAlpha(0)
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+OnCooldown(barButton, false)
+addon:UpdateSoulReaperGlow()
+check("a highlight found at zero is restored to full", Alpha(barButton), 1)
+
+-- An icon that is not on screen is not decorated, the same rule every other
+-- display here follows.  Nothing is at stake visually; what it buys is not
+-- probing the fields of frames nobody can see.
+-- The cooldown has to come from the row here: a hidden button is not consulted
+-- about the cooldown either, so without a second source there would be nothing
+-- to suppress and this would pass whether the gate exists or not.
+reset({ cdm = true })
+barButton:Hide()
+OnCooldown(cdmRow, true)
+addon:UpdateSoulReaperGlow()
+check("an off-screen icon is left alone", Alpha(barButton), 1)
+check("while the row that answered is suppressed", Alpha(cdmRow), 0)
+
+-- `overlay` is a border as often as it is a glow, so the name alone is not
+-- enough: without the animation fields every proc glow has, it is not touched.
+reset({ field = "overlay" })
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("a plain `overlay` is not assumed to be a glow", Alpha(barButton), 1)
+
+reset({ field = "overlay", shape = "animIn" })
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("an `overlay` that animates like a glow is suppressed", Alpha(barButton), 0)
+
+-- The assisted-rotation highlight is a different frame for the same annoyance.
+reset({ field = "AssistedCombatRotationFrame" })
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("the assisted-rotation highlight is suppressed too", Alpha(barButton), 0)
+
+-- ---------------------------------------------------------------
+-- 5. The watcher is wired to all of the above.
+-- ---------------------------------------------------------------
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+W.advance(0.2)
+check("the OnUpdate watcher suppresses without being called by hand", Alpha(barButton), 0)
+OnCooldown(barButton, false)
+W.advance(0.2)
+check("and restores on its own", Alpha(barButton), 1)
+
+-- ---------------------------------------------------------------
+-- 6. The diagnostic reads state without changing it.
+-- ---------------------------------------------------------------
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+W.printed = {}
+addon:PrintSoulReaperDiagnostic()
+check("the diagnostic printed something", #W.printed > 0, true)
+check("the diagnostic left the suppression alone", Alpha(barButton), 0)
+
+-- Asking the question clears the cast flag whenever no swipe is up, so a
+-- diagnostic run in the gap between the cast and Blizzard drawing the swipe
+-- would otherwise cost the suppression that cast had just earned.
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+addon:PrintSoulReaperDiagnostic()
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("the diagnostic did not consume the cast flag", Alpha(barButton), 0)
+
+W.report("Soul Reaper glow suppression")

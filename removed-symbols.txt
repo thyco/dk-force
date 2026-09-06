@@ -36,7 +36,10 @@ BuildDnDPage
 ShouldSuppressSoulReaperGlow
 GetButtonSpellIDForGlow
 SetupSoulReaperHook
-BuildSoulReaperPage
+# BuildSoulReaperPage was removed with the rest of the Soul Reaper glow
+# control and is deliberately back: the page now carries one switch, for
+# hiding the glow only while the spell is on cooldown.  The three symbols
+# above it stayed deleted: the always-suppress hook is not what came back.
 StopBloodBoneOverlay
 StopBloodBoneReminder
 RefreshBloodBoneReminder

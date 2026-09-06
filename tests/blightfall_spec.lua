@@ -4,7 +4,7 @@
 -- never sees it and WoW can never load it.
 --
 -- The prompt is two steps behind one frame, and each step has its own talent:
--- Soul Reaper is an ordinary class talent, Blightfall a San'layn hero talent.
+-- Soul Reaper is an ordinary Unholy talent, Blightfall a San'layn hero talent.
 -- The Blightfall talent used to gate the whole feature, so a Rider of the
 -- Apocalypse build -- which has Soul Reaper and Dark Transformation just the
 -- same -- got no prompt at all.  Most of what follows pins down the two chains
