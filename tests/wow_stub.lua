@@ -64,10 +64,32 @@ function frameMeta:SetScript(which, fn)
     if which == "OnUpdate" then onUpdateScripts[#onUpdateScripts + 1] = { frame = self, fn = fn } end
 end
 function frameMeta:GetScript(which) return self._scripts[which] end
--- No-op: nothing in these specs drives WoW events, only OnUpdate/C_Timer/direct
--- calls, so there is nothing for a fake event system to dispatch.
-function frameMeta:RegisterEvent() end
-function frameMeta:UnregisterEvent() end
+-- Events are dispatched, because one feature's condition comes from Blizzard
+-- rather than from anything the addon can poll: the Soul Reaper glow takes
+-- SPELL_ACTIVATION_OVERLAY_GLOW_SHOW / _HIDE as the game's own statement of
+-- when the spell is worth pressing.  A spec that could not fire those could
+-- only test the half of that feature which draws nothing.
+local eventFrames = {}
+
+function frameMeta:RegisterEvent(event)
+    self._events = self._events or {}
+    self._events[event] = true
+    eventFrames[self] = true
+end
+
+function frameMeta:UnregisterEvent(event)
+    if self._events then self._events[event] = nil end
+end
+
+-- Delivered to every frame registered for it, as the client does.  Frames that
+-- registered nothing never hear from this, so a spec's own scaffolding stays out
+-- of the way.
+function W.fireEvent(event, ...)
+    for frame in pairs(eventFrames) do
+        local handler = frame._events and frame._events[event] and frame._scripts.OnEvent
+        if handler then handler(frame, event, ...) end
+    end
+end
 
 -- The Blightfall prompt is a standalone screen frame rather than an overlay on
 -- someone else's button, so it is the one display that sizes, anchors, drags

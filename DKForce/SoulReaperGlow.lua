@@ -6,11 +6,25 @@ local addonName, addon = ...
 -- spell is on cooldown afterwards, which is the part that reads as a lie: the
 -- icon says "press me" while pressing it does nothing.
 --
--- Nothing here draws anything.  The feature is entirely subtractive: it takes
--- the alpha off whatever highlight Blizzard put on the icon while the spell is
--- on its own cooldown, and puts it straight back when the cooldown ends.
+-- So DK Force takes the glow over.  Blizzard's own artwork is put out of sight
+-- and this addon draws the glow instead, in its own colour, on the same icons --
+-- but only while the spell can actually be pressed.
 --
--- Alpha rather than Hide, deliberately:
+-- What it does NOT do is decide when Soul Reaper is worth pressing.  That
+-- condition is Blizzard's, it changes when Blizzard changes it, and a copy of it
+-- here would drift.  `SPELL_ACTIVATION_OVERLAY_GLOW_SHOW` and its matching HIDE
+-- are the game saying so itself, for this exact spell id, so the whole rule this
+-- file adds is: what Blizzard wants, minus the cooldown.
+--
+-- If those events never fire -- the highlight on the icon turns out to be
+-- something else, the assisted-rotation one say -- then nothing is ever known to
+-- be wanted, this file draws nothing, and what is left is the plain subtractive
+-- behaviour: Blizzard's own glow, hidden while the spell is on cooldown.  That
+-- degradation is deliberate, and it is why suppression is not simply "on
+-- whenever the feature is".
+--
+-- Blizzard's artwork is put out of sight by alpha rather than Hide,
+-- deliberately:
 --
 --   Hiding the frame desyncs Blizzard's own bookkeeping.  It still believes the
 --   highlight is up, so it never redraws it, and putting it back would mean
@@ -53,9 +67,24 @@ local GLOW_SHAPE = {
     "animIn", "animOut",
 }
 
+-- The glow this addon draws in place of Blizzard's, on the action-bar copies and
+-- the Cooldown Manager row alike.  The group owns the overlay lifecycle and no
+-- policy at all; every decision below stays in this file.
+local soulReaperGroup = addon:NewGlowGroup({
+    settings  = function() return DKForceDB and DKForceDB.soulReaperGlow end,
+    spellKeys = { soulReaper = true },
+})
+
 -- Cooldown Manager rows, registered by CDMHook.  A set rather than a list: the
--- same row is offered again on every RefreshData.
+-- same row is offered again on every RefreshData.  Kept alongside the group's
+-- own table because these are read for their cooldown swipe, which is a
+-- different question from which frames carry an overlay.
 local cdmFrames = {}
+
+-- Whether the game currently wants Soul Reaper glowing, straight from its own
+-- SPELL_ACTIVATION_OVERLAY_GLOW_SHOW / _HIDE.  False until told otherwise, so a
+-- client that never fires them leaves this feature purely subtractive.
+local blizzardWants = false
 
 -- Highlights this file has taken the alpha off, and what to put back.  Keyed by
 -- the highlight frame itself, so a button that leaves the bars mid-cooldown is
@@ -193,38 +222,88 @@ function addon:OnSoulReaperCast(spellID)
 end
 
 function addon:RegisterCDMSoulReaperFrame(frame)
-    if not frame or cdmFrames[frame] then return false end
+    if not frame then return false end
+    soulReaperGroup:RegisterCDMFrame(frame, "soulReaper")
+    if cdmFrames[frame] then return false end
     cdmFrames[frame] = true
     return true
 end
 
+-- The whole rule, once per tick.
+--
+-- Blizzard's artwork goes out of sight for either of two reasons, and they are
+-- genuinely different: because this addon is drawing the glow instead, or
+-- because the spell is on cooldown and nothing should be glowing at all.  The
+-- second still applies on a client where the show/hide events never arrive,
+-- which is what keeps the feature useful when the takeover cannot work.
 function addon:UpdateSoulReaperGlow()
     if not addon:IsSoulReaperGlowEnabled() then
         lastAnswer = "feature off"
+        soulReaperGroup:Hide()
         RestoreAll()
         return false
     end
     local onCooldown, answer = OnOwnCooldown()
     lastAnswer = answer
-    if not onCooldown then
+
+    if blizzardWants or onCooldown then
+        ForEachTrackedFrame(function(frame)
+            if Visible(frame) then ForEachHighlight(frame, Suppress) end
+        end)
+    else
         RestoreAll()
-        return false
     end
-    ForEachTrackedFrame(function(frame)
-        if Visible(frame) then ForEachHighlight(frame, Suppress) end
-    end)
-    return true
+
+    -- What Blizzard wants, minus the cooldown.
+    if blizzardWants and not onCooldown then
+        soulReaperGroup:Show()
+        return true
+    end
+    soulReaperGroup:Hide()
+    return false
 end
 
--- Everything the addon hands back to Blizzard: the settings switch going off,
--- a Test stopping, a spec change.  Safe to call when nothing is suppressed.
-function addon:RestoreSoulReaperGlow()
+-- Everything this addon put on the icons comes off: its own glow, and the alpha
+-- it took from Blizzard's.  The path StopAll, a Test ending and a settings
+-- change all take.  Safe to call when nothing is on.
+function addon:StopSoulReaperGlow()
+    soulReaperGroup:Hide()
     RestoreAll()
 end
 
+-- A settings change stops everything rather than re-colouring in place: an
+-- overlay that is already `_glowActive` would keep its old colour, the trap
+-- RefreshFesteringGlowStyle exists to escape.  The watcher puts it all back on
+-- its next tick, a tenth of a second later, with the new colour.
 function addon:RefreshSoulReaperGlow()
-    if not addon:IsSoulReaperGlowEnabled() then RestoreAll() end
+    addon:StopSoulReaperGlow()
 end
+
+-- Rebuilt after every bar scan, the same as every other glow here.
+function addon:CreateSoulReaperOverlays()
+    soulReaperGroup:ClearBarOverlays()
+    soulReaperGroup:BuildBarOverlays()
+end
+
+-- The options-panel Test: light every Soul Reaper icon there is, regardless of
+-- what the game wants or what the cooldown says.  It sets no state, so the
+-- watcher is free to take the display back the moment the test stops.
+function addon:TestSoulReaperGlow()
+    if not addon:IsSoulReaperGlowEnabled() then return 0 end
+    return soulReaperGroup:Show()
+end
+
+-- Blizzard saying, for this exact spell, whether it wants the glow.  Registered
+-- unconditionally: the flag has to be right the moment the feature is switched
+-- on, and a SHOW that arrived while it was off would otherwise never be seen.
+local intentFrame = CreateFrame("Frame")
+intentFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+intentFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
+intentFrame:SetScript("OnEvent", function(_, event, spellID)
+    local soulReaper = addon.SPELLS and addon.SPELLS.SOUL_REAPER
+    if not (soulReaper and spellID == soulReaper.id) then return end
+    blizzardWants = (event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+end)
 
 -- Ten times a second, the rate every other watcher here polls at.  The work on
 -- a tick that changes nothing is one swipe read per tracked frame.
@@ -300,6 +379,17 @@ function addon:PrintSoulReaperDiagnostic()
     say("castSeen (our own Soul Reaper cast): " .. yn(castSeen))
     say("on its own cooldown: " .. yn(onCooldown) .. " -- " .. answer)
     say("last watcher answer: " .. lastAnswer)
+    say("SPELL_ACTIVATION_OVERLAY_GLOW says Soul Reaper is wanted: " .. yn(blizzardWants))
+    if not blizzardWants then
+        say("  If it never turns true while the icon is visibly glowing, the")
+        say("  glow is not the one this event describes: DK Force will draw")
+        say("  nothing and only hide the game's glow while on cooldown.")
+    end
+    local drawn = 0
+    soulReaperGroup:ForEach(function(overlay)
+        if overlay._glowActive then drawn = drawn + 1 end
+    end)
+    say("DK Force glows currently drawn: " .. drawn)
     local held = 0
     for _ in pairs(suppressed) do held = held + 1 end
     say("highlights currently suppressed: " .. held)

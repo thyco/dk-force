@@ -141,12 +141,19 @@ addon.DEFAULT_DB = {
         nativeColor = true,
         color       = { r = 0.00, g = 0.90, b = 0.20 },
     },
-    -- Take Blizzard's own Soul Reaper highlight off the icon while the spell is
-    -- on cooldown.  On by default, unlike every other feature added after the
-    -- first release: this one only ever removes something the client is already
-    -- getting wrong, so there is nothing to opt into.
+    -- Take Soul Reaper's glow over: hide the game's own, and draw this addon's
+    -- while the game wants the glow AND the spell is off cooldown.  On by
+    -- default, unlike every other feature added after the first release --
+    -- what it mainly does is stop the client saying "press me" about a spell
+    -- that cannot be pressed, and there is nothing to opt into in that.
+    --
+    -- `nativeColor` defaults on, so out of the box the replacement looks like
+    -- what it replaced: a nil colour is the only way to get Blizzard's own
+    -- artwork rather than a desaturated copy tinted back toward gold.
     soulReaperGlow = {
-        enabled = true,
+        enabled     = true,
+        nativeColor = true,
+        color       = { r = 1.00, g = 0.82, b = 0.00 },
     },
     -- Unholy chain prompt.  The movable icon is the only display DK Force
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
@@ -230,9 +237,7 @@ function addon:StopAll()
     addon:StopDnDMissingGlow()
     addon:StopScourgeDim()
     addon:StopPutrefyCues()
-    -- Subtractive rather than additive: stopping it means handing Blizzard's
-    -- own highlight back, not taking one of ours away.
-    addon:RestoreSoulReaperGlow()
+    addon:StopSoulReaperGlow()
 end
 
 local castFrame = CreateFrame("Frame")

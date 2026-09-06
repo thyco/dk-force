@@ -3,10 +3,17 @@
 -- Repo infrastructure, not addon code -- outside DKForce/ so verify.sh check 3
 -- never sees it and WoW can never load it.
 --
--- The feature is subtractive: it takes the alpha off Blizzard's own highlight
--- while Soul Reaper is on cooldown and puts it back afterwards.  Two things
--- about that are worth pinning down, and neither is visible by reading the code
--- next to a running client:
+-- The feature takes the glow over: it puts Blizzard's own highlight out of sight
+-- and draws this addon's in its place, on the game's own condition minus the
+-- cooldown.  Three things about that are worth pinning down, and none of them is
+-- visible by reading the code next to a running client:
+--
+--   That the condition is Blizzard's.  SPELL_ACTIVATION_OVERLAY_GLOW_SHOW and
+--   its HIDE are the game saying whether the spell is worth pressing, and this
+--   file never second-guesses them -- but it does subtract the cooldown.  The
+--   cases where those events never arrive matter just as much: the takeover then
+--   draws nothing and the feature falls back to hiding the game's own glow while
+--   on cooldown, which is most of what follows.
 --
 --   Which cooldown it believes.  A Cooldown Manager row draws the spell's own
 --   cooldown and never the global one, so wherever a row exists it is the only
@@ -21,6 +28,7 @@
 local W = dofile("tests/wow_stub.lua")
 local check = W.check
 
+local GLOW_SOURCE = os.getenv("DKFORCE_GLOW_SOURCE") or "DKForce/Glow.lua"
 local SOURCE = os.getenv("DKFORCE_SOUL_REAPER_SOURCE") or "DKForce/SoulReaperGlow.lua"
 
 local SOUL_REAPER_ID, DEATH_COIL_ID = 343294, 47541
@@ -34,9 +42,15 @@ addon.trackedButtons = { soulReaper = {} }
 -- loaded beside this.
 addon.IsSoulReaperTalented = function() return true end
 
-DKForceDB = { soulReaperGlow = { enabled = true } }
+DKForceDB = {
+    soulReaperGlow = {
+        enabled = true, nativeColor = true,
+        color = { r = 1.00, g = 0.82, b = 0.00 },
+    },
+}
 local settings = DKForceDB.soulReaperGlow
 
+W.load(GLOW_SOURCE, addon)
 W.load(SOURCE, addon)
 
 -- ---------------------------------------------------------------
@@ -59,6 +73,8 @@ end
 local function Glowing(icon) icon.highlight:Show() end
 local function OnCooldown(icon, on) if on then icon.cooldown:Show() else icon.cooldown:Hide() end end
 local function Alpha(icon) return icon.highlight:GetAlpha() end
+-- DK Force's own glow, which is drawn on an overlay parented to the icon.
+local function OurGlow(icon) return W.glowingChildrenOf(icon) end
 
 local barButton, cdmRow
 -- Rows are never unregistered -- CDMHook has no such path -- so every row a
@@ -69,12 +85,15 @@ local givenRows = {}
 local function reset(opts)
     opts = opts or {}
     -- Hand back anything still held before the icons holding it go out of scope.
-    addon:RestoreSoulReaperGlow()
+    addon:StopSoulReaperGlow()
+    -- Nothing wants the glow until a case says so.
+    W.fireEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", SOUL_REAPER_ID)
     settings.enabled = true
     for _, row in ipairs(givenRows) do row:Hide() end
     barButton = NewIcon(opts.field, opts.shape)
     Glowing(barButton)
     addon.trackedButtons.soulReaper = { barButton }
+    addon:CreateSoulReaperOverlays()
     -- A tick with nothing on cooldown and no row on screen is what makes the
     -- addon forget a remembered cast; it exposes no other way, which is itself
     -- the behaviour case 2 turns on.  It has to happen before a fresh row is
@@ -179,8 +198,8 @@ reset()
 addon:OnSoulReaperCast(SOUL_REAPER_ID)
 OnCooldown(barButton, true)
 addon:UpdateSoulReaperGlow()
-addon:RestoreSoulReaperGlow()
-check("RestoreSoulReaperGlow hands the alpha back", Alpha(barButton), 1)
+addon:StopSoulReaperGlow()
+check("StopSoulReaperGlow hands the alpha back", Alpha(barButton), 1)
 
 -- ---------------------------------------------------------------
 -- 4. What counts as a highlight.
@@ -273,4 +292,83 @@ OnCooldown(barButton, true)
 addon:UpdateSoulReaperGlow()
 check("the diagnostic did not consume the cast flag", Alpha(barButton), 0)
 
-W.report("Soul Reaper glow suppression")
+-- ---------------------------------------------------------------
+-- 7. The takeover: the game's condition, minus the cooldown.
+-- ---------------------------------------------------------------
+local function BlizzardWants(wanted)
+    W.fireEvent(wanted and "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW"
+        or "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", SOUL_REAPER_ID)
+end
+
+reset({ cdm = true })
+addon:UpdateSoulReaperGlow()
+check("nothing wanted: no glow of ours", OurGlow(barButton), 0)
+check("nothing wanted: the game's is left alone", Alpha(barButton), 1)
+
+BlizzardWants(true)
+addon:UpdateSoulReaperGlow()
+check("wanted and ready: we glow the bar", OurGlow(barButton), 1)
+check("wanted and ready: we glow the row", OurGlow(cdmRow), 1)
+check("wanted and ready: the game's is out of sight", Alpha(barButton), 0)
+check("wanted and ready: the row's too", Alpha(cdmRow), 0)
+
+-- The whole point: the game keeps wanting the glow through the cooldown, and
+-- this is the part that does not.
+OnCooldown(cdmRow, true)
+addon:UpdateSoulReaperGlow()
+check("wanted but on cooldown: our glow goes out", OurGlow(barButton), 0)
+check("wanted but on cooldown: and the row's", OurGlow(cdmRow), 0)
+check("wanted but on cooldown: the game's stays out of sight", Alpha(barButton), 0)
+
+OnCooldown(cdmRow, false)
+addon:UpdateSoulReaperGlow()
+check("ready again: our glow comes back", OurGlow(barButton), 1)
+
+-- The game withdrawing the request ends it, and hands its own artwork back.
+BlizzardWants(false)
+addon:UpdateSoulReaperGlow()
+check("no longer wanted: our glow goes out", OurGlow(barButton), 0)
+check("no longer wanted: the game's is handed back", Alpha(barButton), 1)
+
+-- Another spell's glow is not this spell's.
+reset({ cdm = true })
+W.fireEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", DEATH_COIL_ID)
+addon:UpdateSoulReaperGlow()
+check("another spell being wanted changes nothing", OurGlow(barButton), 0)
+
+-- The switch takes our glow off as well as handing the game's back.
+reset({ cdm = true })
+BlizzardWants(true)
+addon:UpdateSoulReaperGlow()
+check("glowing before the switch moves", OurGlow(barButton), 1)
+settings.enabled = false
+addon:RefreshSoulReaperGlow()
+check("switched off: our glow is gone", OurGlow(barButton), 0)
+check("switched off: the game's is back", Alpha(barButton), 1)
+addon:UpdateSoulReaperGlow()
+check("and it stays off while disabled", OurGlow(barButton), 0)
+
+-- The Test lights every icon whatever the game and the cooldown say, because
+-- neither is true at a target dummy.
+reset({ cdm = true })
+OnCooldown(cdmRow, true)
+check("test: lights both icons", addon:TestSoulReaperGlow(), 2)
+addon:UpdateSoulReaperGlow()
+check("test: and the watcher takes it straight back", OurGlow(barButton), 0)
+
+-- ---------------------------------------------------------------
+-- 8. A client whose highlight is not the one those events describe.
+-- ---------------------------------------------------------------
+-- Nothing ever reports the glow as wanted, so the takeover draws nothing and
+-- what is left is the subtractive feature -- which must still work.
+reset()
+addon:OnSoulReaperCast(SOUL_REAPER_ID)
+OnCooldown(barButton, true)
+addon:UpdateSoulReaperGlow()
+check("no events: we still draw nothing", OurGlow(barButton), 0)
+check("no events: the game's glow is still hidden on cooldown", Alpha(barButton), 0)
+OnCooldown(barButton, false)
+addon:UpdateSoulReaperGlow()
+check("no events: and handed back when ready", Alpha(barButton), 1)
+
+W.report("Soul Reaper glow")
