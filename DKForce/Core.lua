@@ -471,6 +471,9 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:PrintPutrefyDiagnostic()
     elseif cmd == "soul" then
         addon:PrintSoulReaperDiagnostic()
+    elseif cmd == "soul reset" then
+        addon:ResetSoulReaperDiagnostic()
+        print("|cffcc0000DK Force:|r Soul Reaper counters cleared")
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false
@@ -490,6 +493,7 @@ SlashCmdList["DKFORCE"] = function(msg)
             print("|cffcc0000DK Force:|r /dkf blight - Blightfall prompt diagnostic")
             print("|cffcc0000DK Force:|r /dkf putrefy - Putrefy cue diagnostic")
             print("|cffcc0000DK Force:|r /dkf soul - Soul Reaper glow diagnostic")
+            print("|cffcc0000DK Force:|r /dkf soul reset - Clear its counters")
             print("|cffcc0000DK Force:|r /dkf minimap - Show Minimap button")
         end
     end

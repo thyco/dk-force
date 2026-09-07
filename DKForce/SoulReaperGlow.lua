@@ -16,11 +16,12 @@ local addonName, addon = ...
 -- are the game saying so itself, for this exact spell id, so the whole rule this
 -- file adds is: what Blizzard wants, minus the cooldown.
 --
--- Verified in game on 12.1: the events do fire for 343294, one of the fields
--- below carries the highlight, and the takeover is the path that actually runs.
--- The fallback in the next paragraph has never been the live behaviour here --
--- it is insurance against a client where the glow is something else, not a
--- description of this one.  `/dkf soul` prints which of the two you are on.
+-- Whether that is what glows Soul Reaper on a given client is NOT known from
+-- here, and a comment in this file once claimed it was.  It was withdrawn: the
+-- report behind it turned out to be the options-panel Test, which lights every
+-- icon unconditionally and so proves nothing about the condition at all.  The
+-- counters `/dkf soul` prints are there because that is the only honest way to
+-- tell -- they are accumulated over real combat rather than sampled once.
 --
 -- If those events never fire -- the highlight on the icon turns out to be
 -- something else, the assisted-rotation one say -- then nothing is ever known to
@@ -100,6 +101,43 @@ local suppressed = {}
 local castSeen = false
 local lastAnswer = "not asked yet"
 
+-- Instrumentation, and the reason it exists: every way this feature can fail
+-- looks identical on screen.  A glow that never appears is the game never
+-- asking for it, or the cooldown reading never clearing, or no icon being
+-- tracked, or the highlight never being found -- four different bugs, one
+-- symptom, none of them distinguishable from a single snapshot taken after the
+-- fight.  So the watcher counts, and `/dkf soul` reads the counts back.
+--
+-- `maxCooldownRun` is the load-bearing one.  Soul Reaper's cooldown is seconds
+-- long; if the longest unbroken stretch this file called "on cooldown" is far
+-- longer than that, whatever it is reading is not that cooldown.
+local diag = {
+    ticks = 0, wantedTicks = 0, cooldownTicks = 0,
+    drawnTicks = 0, suppressTicks = 0,
+    showEvents = 0, hideEvents = 0,
+    highlightsSeen = 0,
+    maxCooldownRun = 0,
+    bySource = {},
+    -- Spell ids seen on an activation-overlay event, whichever spell they were
+    -- for.  If Soul Reaper's glow arrives under an id this file does not expect,
+    -- nothing else in the diagnostic would ever say so.
+    eventIDs = {},
+}
+local cooldownRunStart
+
+function addon:ResetSoulReaperDiagnostic()
+    diag = {
+        ticks = 0, wantedTicks = 0, cooldownTicks = 0,
+        drawnTicks = 0, suppressTicks = 0,
+        showEvents = 0, hideEvents = 0,
+        highlightsSeen = 0,
+        maxCooldownRun = 0,
+        bySource = {},
+        eventIDs = {},
+    }
+    cooldownRunStart = nil
+end
+
 local function Settings()
     return DKForceDB and DKForceDB.soulReaperGlow
 end
@@ -163,6 +201,7 @@ local function Suppress(highlight)
     if not alphaOK or type(alpha) ~= "number" or alpha <= 0 then alpha = 1 end
     if not pcall(highlight.SetAlpha, highlight, 0) then return end
     suppressed[highlight] = alpha
+    diag.highlightsSeen = diag.highlightsSeen + 1
 end
 
 -- Iterates what was actually suppressed, not what is currently tracked, so
@@ -252,7 +291,19 @@ function addon:UpdateSoulReaperGlow()
     local onCooldown, answer = OnOwnCooldown()
     lastAnswer = answer
 
+    diag.ticks = diag.ticks + 1
+    diag.bySource[answer] = (diag.bySource[answer] or 0) + 1
+    if blizzardWants then diag.wantedTicks = diag.wantedTicks + 1 end
+    if onCooldown then
+        diag.cooldownTicks = diag.cooldownTicks + 1
+        cooldownRunStart = cooldownRunStart or GetTime()
+        diag.maxCooldownRun = math.max(diag.maxCooldownRun, GetTime() - cooldownRunStart)
+    else
+        cooldownRunStart = nil
+    end
+
     if blizzardWants or onCooldown then
+        diag.suppressTicks = diag.suppressTicks + 1
         ForEachTrackedFrame(function(frame)
             if Visible(frame) then ForEachHighlight(frame, Suppress) end
         end)
@@ -263,6 +314,7 @@ function addon:UpdateSoulReaperGlow()
     -- What Blizzard wants, minus the cooldown.
     if blizzardWants and not onCooldown then
         soulReaperGroup:Show()
+        diag.drawnTicks = diag.drawnTicks + 1
         return true
     end
     soulReaperGroup:Hide()
@@ -306,9 +358,17 @@ local intentFrame = CreateFrame("Frame")
 intentFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
 intentFrame:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
 intentFrame:SetScript("OnEvent", function(_, event, spellID)
+    local key = tostring(spellID)
+    diag.eventIDs[key] = (diag.eventIDs[key] or 0) + 1
     local soulReaper = addon.SPELLS and addon.SPELLS.SOUL_REAPER
     if not (soulReaper and spellID == soulReaper.id) then return end
-    blizzardWants = (event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
+    if event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
+        diag.showEvents = diag.showEvents + 1
+        blizzardWants = true
+    else
+        diag.hideEvents = diag.hideEvents + 1
+        blizzardWants = false
+    end
 end)
 
 -- Ten times a second, the rate every other watcher here polls at.  The work on
@@ -396,6 +456,47 @@ function addon:PrintSoulReaperDiagnostic()
         if overlay._glowActive then drawn = drawn + 1 end
     end)
     say("DK Force glows currently drawn: " .. drawn)
+
+    -- Accumulated over real combat, which is the only place any of this is
+    -- true.  `/dkf soul reset` zeroes it before a pull.
+    say("--- since the last reset ---")
+    say(("watcher ticks with the feature on: %d (%.1fs of combat-or-not)")
+        :format(diag.ticks, diag.ticks * 0.1))
+    say(("  the game asked for the glow on: %d of them"):format(diag.wantedTicks))
+    say(("  read as on its own cooldown on: %d, longest unbroken run %.1fs")
+        :format(diag.cooldownTicks, diag.maxCooldownRun))
+    say(("  DK Force actually drew on: %d,  the game's glow hidden on: %d")
+        :format(diag.drawnTicks, diag.suppressTicks))
+    say(("  activation events for Soul Reaper: %d show, %d hide")
+        :format(diag.showEvents, diag.hideEvents))
+    say(("  highlight frames taken over the whole time: %d"):format(diag.highlightsSeen))
+    local ids = {}
+    for id, count in pairs(diag.eventIDs) do ids[#ids + 1] = id .. "x" .. count end
+    table.sort(ids)
+    say("  every activation event seen, by spell id: "
+        .. (#ids > 0 and table.concat(ids, " ") or "none at all"))
+    for answer, count in pairs(diag.bySource) do
+        say(("  cooldown answer %-46s %d"):format(answer, count))
+    end
+
+    -- Four failures, one symptom.  Name which one the numbers describe rather
+    -- than leaving it to be worked out from six lines of counters.
+    if diag.ticks == 0 then
+        say("READ: the watcher never ran with the feature on.")
+    elseif #bar == 0 and rows == 0 then
+        say("READ: no icon is tracked, so there is nothing to glow or to hide.")
+    elseif diag.showEvents == 0 then
+        say("READ: the game never once asked for Soul Reaper's glow.  Either it")
+        say("      never wanted it, or its glow is not the activation overlay --")
+        say("      compare the spell ids above against 343294.")
+    elseif diag.drawnTicks == 0 then
+        say("READ: the game did ask, and DK Force still never drew.  The cooldown")
+        say("      reading is what blocked it -- check the longest run above")
+        say("      against Soul Reaper's actual cooldown.")
+    else
+        say("READ: the glow was drawn; if none was visible the drawing is at fault,")
+        say("      not the condition.")
+    end
     local held = 0
     for _ in pairs(suppressed) do held = held + 1 end
     say("highlights currently suppressed: " .. held)

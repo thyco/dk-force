@@ -373,4 +373,68 @@ OnCooldown(barButton, false)
 addon:UpdateSoulReaperGlow()
 check("no events: and handed back when ready", Alpha(barButton), 1)
 
+-- ---------------------------------------------------------------
+-- 9. The instrument itself.
+-- ---------------------------------------------------------------
+-- Four different failures show up on screen as the same nothing, so these
+-- counters are what says which one happened.  An instrument that miscounts is
+-- worse than none: it sends the next investigation at the wrong component.
+local function Counters()
+    W.printed = {}
+    addon:PrintSoulReaperDiagnostic()
+    return table.concat(W.printed, "\n")
+end
+
+-- The counters are cleared AFTER the icons are set up, because reset() itself
+-- runs a watcher tick to clear the remembered cast and that tick is real.
+reset({ cdm = true })
+addon:ResetSoulReaperDiagnostic()
+BlizzardWants(true)
+addon:UpdateSoulReaperGlow()          -- wanted, ready       -> drawn
+OnCooldown(cdmRow, true)
+addon:UpdateSoulReaperGlow()          -- wanted, on cooldown -> not drawn
+local out = Counters()
+check("counts the ticks", out:find("feature on: 2", 1, true) ~= nil, true)
+check("counts what the game asked for", out:find("glow on: 2 of them", 1, true) ~= nil, true)
+check("counts the cooldown ticks", out:find("cooldown on: 1,", 1, true) ~= nil, true)
+check("counts what it drew", out:find("drew on: 1,", 1, true) ~= nil, true)
+check("counts the activation events", out:find("1 show, 0 hide", 1, true) ~= nil, true)
+
+BlizzardWants(false)
+check("counts the hide too", Counters():find("1 show, 1 hide", 1, true) ~= nil, true)
+
+-- The id every activation event arrived under, which is the only thing that can
+-- say "the glow is real, but not the one this file listens for".
+W.fireEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", DEATH_COIL_ID)
+check("records ids it does not act on", Counters():find(tostring(DEATH_COIL_ID), 1, true) ~= nil, true)
+
+-- The reading, which is the part a person actually uses.
+reset()
+addon:ResetSoulReaperDiagnostic()
+addon:UpdateSoulReaperGlow()
+check("names the failure when the game never asked",
+    Counters():find("never once asked", 1, true) ~= nil, true)
+
+reset({ cdm = true })
+addon:ResetSoulReaperDiagnostic()
+BlizzardWants(true)
+OnCooldown(cdmRow, true)
+addon:UpdateSoulReaperGlow()
+-- Matched on one line: the readout wraps, so a phrase that straddles the wrap
+-- is never present in the text however right the diagnostic is.
+check("names the cooldown when that is what blocked it",
+    Counters():find("reading is what blocked it", 1, true) ~= nil, true)
+
+-- A run is measured against the clock rather than the tick count, because the
+-- thing it has to be held up against is a cooldown in seconds.
+reset({ cdm = true })
+addon:ResetSoulReaperDiagnostic()
+OnCooldown(cdmRow, true)
+W.advance(4)
+local run = tonumber(Counters():match("longest unbroken run ([%d%.]+)s"))
+check("measures the longest run in seconds", run ~= nil and run > 3.5, true)
+
+addon:ResetSoulReaperDiagnostic()
+check("reset clears them", Counters():find("feature on: 0", 1, true) ~= nil, true)
+
 W.report("Soul Reaper glow")
