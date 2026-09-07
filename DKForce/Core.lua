@@ -141,19 +141,13 @@ addon.DEFAULT_DB = {
         nativeColor = true,
         color       = { r = 0.00, g = 0.90, b = 0.20 },
     },
-    -- Take Soul Reaper's glow over: hide the game's own, and draw this addon's
-    -- while the game wants the glow AND the spell is off cooldown.  On by
-    -- default, unlike every other feature added after the first release --
-    -- what it mainly does is stop the client saying "press me" about a spell
-    -- that cannot be pressed, and there is nothing to opt into in that.
-    --
-    -- `nativeColor` defaults on, so out of the box the replacement looks like
-    -- what it replaced: a nil colour is the only way to get Blizzard's own
-    -- artwork rather than a desaturated copy tinted back toward gold.
+    -- Hide the game's own Soul Reaper glow outright, and draw nothing in its
+    -- place -- another addon supplies the glow.  There is no colour here for
+    -- that reason.  On by default, unlike every other feature added after the
+    -- first release: all it does is remove something, so there is nothing to
+    -- opt into.
     soulReaperGlow = {
-        enabled     = true,
-        nativeColor = true,
-        color       = { r = 1.00, g = 0.82, b = 0.00 },
+        enabled = true,
     },
     -- Unholy chain prompt.  The movable icon is the only display DK Force
     -- ships, and its OnUpdate drives the countdown, the cues and the expiry,
@@ -268,7 +262,6 @@ castFrame:SetScript("OnEvent", function(_, event, unit, _, spellID)
         end
         addon:OnBlightfallChainSpellCast(spellID)
         addon:OnPutrefyCast(spellID)
-        addon:OnSoulReaperCast(spellID)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- Do not call StopAll here: it cancels the Festering Scythe expiry
         -- timer, even though that buff continues ticking out of combat.
@@ -471,9 +464,6 @@ SlashCmdList["DKFORCE"] = function(msg)
         addon:PrintPutrefyDiagnostic()
     elseif cmd == "soul" then
         addon:PrintSoulReaperDiagnostic()
-    elseif cmd == "soul reset" then
-        addon:ResetSoulReaperDiagnostic()
-        print("|cffcc0000DK Force:|r Soul Reaper counters cleared")
     elseif cmd == "minimap" then
         if addon.CreateMinimapButton then
             DKForceDB.minimapHidden = false
@@ -493,7 +483,6 @@ SlashCmdList["DKFORCE"] = function(msg)
             print("|cffcc0000DK Force:|r /dkf blight - Blightfall prompt diagnostic")
             print("|cffcc0000DK Force:|r /dkf putrefy - Putrefy cue diagnostic")
             print("|cffcc0000DK Force:|r /dkf soul - Soul Reaper glow diagnostic")
-            print("|cffcc0000DK Force:|r /dkf soul reset - Clear its counters")
             print("|cffcc0000DK Force:|r /dkf minimap - Show Minimap button")
         end
     end

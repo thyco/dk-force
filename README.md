@@ -29,16 +29,13 @@ Built for personal use. Not distributed, and not tracking upstream.
   when you leave combat.
 - **Soul Reaper glow** — the game glows Soul Reaper when it wants you to press
   it, on a target in execute range and while Dark Transformation is up, and
-  keeps glowing through the cooldown that follows. DK Force hides that glow and
-  draws its own in its place, on the action bar and the Cooldown Manager alike,
-  on the same condition **minus the cooldown**. The condition itself is never
-  reimplemented — it is read from the game's own
-  `SPELL_ACTIVATION_OVERLAY_GLOW_SHOW`, so it cannot drift from what Blizzard
-  does. Colour is configurable; leave it Native to look exactly like what it
-  replaced. Track Soul Reaper on the Cooldown Manager if you can: that row shows
-  the spell's own cooldown and never the global one, which is the only exact
-  reading of when the glow should come back. On by default; `/dkf soul` reports
-  what it found on your icons.
+  keeps glowing through the cooldown that follows. This hides that glow
+  outright, on the action bar and the Cooldown Manager alike, and puts nothing
+  in its place — use another addon for the glow itself. A version that drew a
+  replacement only while the spell was ready worked at a target dummy and in
+  the open world, showed nothing at all in dungeons, and was removed rather
+  than left half-right. On by default; `/dkf soul` reports what it found on
+  your icons.
 
 ### Blood
 

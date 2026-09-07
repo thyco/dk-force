@@ -463,7 +463,6 @@ function addon:CreateConfigPanel(standalone)
         if key == "blooddndmissing" then return DKForceDB.bloodDndMissing end
         if key == "blightfall" then return DKForceDB.blightfallChain end
         if key == "putrefy" then return DKForceDB.putrefy end
-        if key == "soulreaper" then return DKForceDB.soulReaperGlow end
     end
 
     -- Colour is the only glow setting left, so this is the whole appearance
@@ -709,46 +708,36 @@ function addon:CreateConfigPanel(standalone)
         pages.blightfall = page
     end
 
-    -- The switch, an explanation, and the same colour card and preview every
-    -- other glow page has -- because this page now owns a glow of its own
-    -- rather than only taking one away.
+    -- One switch and an explanation.  No preview and no colour card: the
+    -- feature draws nothing, it only takes the game's own glow off an icon.
     local function BuildSoulReaperPage()
         local page = CreateFrame("Frame", nil, pageHolder)
         page:SetAllPoints(); page.layoutKind = "soulreaper"
         page.settingsCard = CreateCard(page, "Soul Reaper Glow")
-        page.previewCard = CreateCard(page, "Live Preview")
-        page.appearanceCard = CreateCard(page, "Glow Colour")
         AddSelector(page, page.settingsCard)
         local function settings() return DKForceDB.soulReaperGlow end
         page.enable = CreateCheck(page.settingsCard,
-            "Take over the Soul Reaper glow", 14, -76,
+            "Hide the game's Soul Reaper glow", 14, -76,
             function() return settings().enabled end,
             function(v)
                 settings().enabled = v
                 if addon.RefreshSoulReaperGlow then addon:RefreshSoulReaperGlow() end
-                RefreshPreview(page)
             end)
         page.hint = CreateText(page.settingsCard,
             "The game glows Soul Reaper when it wants you to press it -- on a target "
             .. "in execute range, and while Dark Transformation is up -- and keeps "
-            .. "glowing through the cooldown that follows.  DK Force hides that glow "
-            .. "and draws this one in its place, on the action bar and the Cooldown "
-            .. "Manager alike, on the same condition minus the cooldown.  Keep the "
-            .. "colour Native to look exactly like what it replaced.\n\n"
-            .. "Track Soul Reaper on the Cooldown Manager if you can: its row shows "
-            .. "the spell's own cooldown and never the global one, which is the only "
-            .. "exact reading of when the glow should come back.\n\n"
+            .. "glowing through the cooldown that follows.  This hides that glow "
+            .. "entirely, on the action bar and the Cooldown Manager alike, and puts "
+            .. "nothing in its place: use another addon for the glow itself.\n\n"
+            .. "An earlier version drew a replacement only while the spell was ready. "
+            .. "It worked at a dummy and in the open world, showed nothing at all in "
+            .. "dungeons, and was removed rather than left half-right.\n\n"
             .. "/dkf soul reports what it found on your icons.",
             14, -108, "GameFontHighlightSmall", 300, { 0.64, 0.64, 0.64 })
-
-        page.previewIcon = CreatePreview(page.previewCard, addon.SPELLS.SOUL_REAPER.id)
-        BuildColorCard(page, page.appearanceCard, "soulreaper")
 
         page.refresh = function()
             page.selector.refresh()
             page.enable.refresh()
-            page.refreshColor()
-            RefreshPreview(page)
         end
         pages.soulreaper = page
     end
@@ -816,17 +805,11 @@ function addon:CreateConfigPanel(standalone)
                 page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
                 page.hint:SetWidth(math.max(230, leftWidth - 32))
             elseif page.layoutKind == "soulreaper" then
-                -- The Blightfall shape: one tall settings column carrying the
-                -- explanation, with a short preview above the colour card.
-                local previewHeight = 150
+                -- One card, the whole page: a checkbox and the explanation of
+                -- what it does are all there is to lay out.
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
-                page.settingsCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", 0, 0)
-                page.settingsCard:SetWidth(leftWidth)
-                page.previewCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
-                page.previewCard:SetSize(rightWidth, previewHeight)
-                page.appearanceCard:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, -(previewHeight + gap))
-                page.appearanceCard:SetPoint("BOTTOMLEFT", page, "BOTTOMLEFT", leftWidth + gap, 0)
-                page.hint:SetWidth(math.max(230, leftWidth - 32))
+                page.settingsCard:SetPoint("BOTTOMRIGHT", page, "BOTTOMRIGHT", 0, 0)
+                page.hint:SetWidth(math.max(230, width - 32))
             elseif page.layoutKind == "glow" then
                 page.settingsCard:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
                 page.settingsCard:SetSize(leftWidth, topHeight)
@@ -852,7 +835,9 @@ function addon:CreateConfigPanel(standalone)
         -- a no-op when no test is running.
         addon:StopBlightfallTest()
         rescanButton:Show()
-        testButton:Show()
+        -- Nothing to preview: this page's feature only removes artwork the game
+        -- drew, so a Test would have nothing to show.
+        testButton:SetShown(selectedKey ~= "soulreaper")
         activePage.refresh()
     end
 
@@ -1029,7 +1014,6 @@ function addon:CreateConfigPanel(standalone)
             elseif selectedKey == "suddendoom" then addon:TestSuddenDoomGlow()
             elseif selectedKey == "putrefy" then addon:TestPutrefyCue()
             elseif selectedKey == "blooddndmissing" then addon:TestDnDMissingGlow()
-            elseif selectedKey == "soulreaper" then addon:TestSoulReaperGlow()
             elseif selectedKey == "blightfall" then addon:TestBlightfallTracker() end
             testButton:SetText("Stop Test")
         else

@@ -290,7 +290,6 @@ function addon:ScanAllButtons()
     if addon.CreateDnDMissingOverlays then addon:CreateDnDMissingOverlays() end
     if addon.CreateScourgeOverlays then addon:CreateScourgeOverlays() end
     if addon.CreatePutrefyOverlays then addon:CreatePutrefyOverlays() end
-    if addon.CreateSoulReaperOverlays then addon:CreateSoulReaperOverlays() end
     if addon.RefreshFesteringGlows then addon:RefreshFesteringGlows() end
     if addon.RefreshSuddenDoomGlows then addon:RefreshSuddenDoomGlows() end
 end
